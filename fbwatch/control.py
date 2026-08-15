@@ -239,16 +239,21 @@ class DiscordControl:
     def _resolve(self, author_id: str) -> tuple[Subscriber | None, bool]:
         """Map a Discord user to their subscription and admin rights.
 
-        When nobody has a discord_user_id set the watcher is in single-user
-        mode, so whoever can post in the control channel is the admin.
+        Admin rights key off whether *an admin* has linked a Discord account,
+        not whether anyone has.  Linking a normal user first would otherwise
+        lock everybody out of the admin commands, recoverable only by editing
+        subscribers.json on the machine itself.
         """
         subs = self.watcher.subscribers
-        linked = [s for s in subs if s.discord_user_id]
-        if not linked:
-            primary = next((s for s in subs if s.admin), subs[0] if subs else None)
-            return primary, True
-
         me = find_by_discord_id(subs, author_id)
+
+        if not any(s.discord_user_id for s in subs if s.admin):
+            # No admin has claimed a Discord account, so trust the channel:
+            # whoever can post in it administers, as they did before anyone
+            # was linked.  Linking an admin turns this off.
+            primary = next((s for s in subs if s.admin), subs[0] if subs else None)
+            return (me or primary), True
+
         return me, bool(me and me.admin)
 
     # -- commands ---------------------------------------------------------

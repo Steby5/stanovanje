@@ -320,6 +320,57 @@ class TestAdminPermissions(MultiUserTestCase):
         self.assertIn("Admin", self.run_command("help", author_id="42"))
 
 
+class TestAdminLockoutIsAvoided(ControlTestCase):
+    """Linking a normal user must not strip admin from everybody else.
+
+    Admin rights key off whether an *admin* has linked a Discord account. If
+    they keyed off any linked user, adding Ana first would lock the owner out
+    of their own watcher, fixable only by editing subscribers.json by hand.
+    """
+
+    subscribers = {
+        "domin": {
+            "admin": True,
+            "keywords_file": "keywords.txt",
+            "discord_webhook_url": WEBHOOK,
+            # deliberately NOT linked
+        },
+        "ana": {
+            "keywords_file": "keywords/ana.txt",
+            "discord_webhook_url": WEBHOOK2,
+            "discord_user_id": "77",
+        },
+    }
+
+    def setUp(self):
+        super().setUp()
+        (self.base / "keywords").mkdir(exist_ok=True)
+        (self.base / "keywords" / "ana.txt").write_text("garsonjera\n", encoding="utf-8")
+        self.watcher.reload_inputs()
+
+    def test_the_unlinked_owner_keeps_admin(self):
+        self.run_command("pause", author_id="42")
+        self.assertTrue(self.watcher.paused)
+
+    def test_admin_commands_still_reachable(self):
+        self.assertIn("Subscribers", self.run_command("users", author_id="42"))
+
+    def test_a_linked_user_still_resolves_to_their_own_rules(self):
+        self.run_command("add dvosobno", author_id="77")
+        self.assertIn("dvosobno", self.rules_of("ana"))
+        self.assertNotIn("dvosobno", self.rules_of("domin"))
+
+    def test_linking_an_admin_switches_to_strict_matching(self):
+        self.run_command("user set domin discord 42")
+        # Ana is linked and not an admin, so she loses admin rights.
+        self.assertIn("admin-only", self.run_command("pause", author_id="77"))
+        # A stranger now has no subscription at all.
+        self.assertIn("don't have a subscription", self.run_command("add soba", author_id="999"))
+        # The owner still administers.
+        self.run_command("pause", author_id="42")
+        self.assertTrue(self.watcher.paused)
+
+
 class TestUserManagement(MultiUserTestCase):
     def test_add_a_person(self):
         reply = self.run_command("user add bojan")

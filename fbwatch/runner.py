@@ -204,6 +204,7 @@ class Watcher:
         self.control = DiscordControl(self.cfg, self)
         if self.control.enabled:
             self.control.start()
+            self._warn_if_admin_unclaimed()
         elif self.cfg.control_enabled and self.cfg.discord_bot_token:
             log.warning("Discord control is configured but not usable - see the log above.")
 
@@ -257,6 +258,24 @@ class Watcher:
             if scraper:
                 scraper.stop()
             self.store.save()
+
+    def _warn_if_admin_unclaimed(self) -> None:
+        """Point out that admin commands are open to the whole channel.
+
+        Harmless on a private server with one person in it; worth saying out
+        loud once other people are subscribed.
+        """
+        if any(s.discord_user_id for s in self.subscribers if s.admin):
+            return
+        if len(self.subscribers) < 2 and not self.cfg.control_allowed_user_ids:
+            return  # single-user setup: nothing to protect yet
+        if self.cfg.control_allowed_user_ids:
+            return  # the hard allowlist already restricts the channel
+        log.warning(
+            "No admin has a discord_user_id, so anyone who can post in the control "
+            "channel can run admin commands. Claim it with:  "
+            "python main.py users <name> --discord-id <your Discord user id>"
+        )
 
     def _wait(self, seconds: float) -> None:
         """Sleep until the next cycle, staying responsive to Discord commands.

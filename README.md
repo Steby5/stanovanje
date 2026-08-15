@@ -260,10 +260,45 @@ or in a text editor, and changes survive a restart.
 `pause` keeps *recording* new posts while muted, so resuming doesn't dump
 everything that piled up in the meantime.
 
-**Who can use it:** by default, anyone who can post in that channel. On a private
-server that's just you. Once you add other people (below) it splits into
-self-service and admin commands. To lock the channel down entirely, list the
-Discord user ids allowed to touch it (right-click a user → Copy User ID):
+### Who can run what
+
+One channel, shared by everyone. The split is by command, not by channel:
+
+- **Everyone** gets `add`, `remove`, `exclude`, `mine`, `test`, `status`, `help` —
+  each affecting only *their own* trigger words.
+- **Admins** additionally get `users`, `user ...`, `for ...`, `group ...`,
+  `pause`, `resume`, `check`, `interval`, `list`, `telegram`.
+
+How the watcher decides who you are depends on whether an **admin** has linked a
+Discord account:
+
+| State | Who is admin | Who owns `!fbw add` |
+|---|---|---|
+| No admin linked *(the default)* | anyone who can post in the channel | the primary subscriber |
+| An admin has linked | only subscribers with `"admin": true` | the subscriber matching your Discord id |
+
+So **you don't have to link anything** to use it — on a private server with one
+person, the channel *is* the authentication. Linking matters once other people
+share the channel, because that's what tells `!fbw add` whose list to edit.
+
+Link yourself with:
+
+```powershell
+python main.py users domin --discord-id 123456789012345678   # right-click yourself → Copy User ID
+```
+
+Two things to know once you do:
+
+- **Link an admin before, or at the same time as, everyone else.** The moment an
+  admin is linked, matching becomes strict — anyone unlinked can then only run
+  `help` and `status`.
+- Everyone in the channel sees everyone else's commands and replies. If people
+  want their searches private, give them separate channels' webhooks for
+  *notifications* and keep configuration here, or run their commands for them
+  with `!fbw for <name> add ...`.
+
+To lock the channel down regardless of any of the above, list the Discord user
+ids allowed to touch it — this is a hard gate checked before anything else:
 
 ```json
 "control_allowed_user_ids": ["123456789012345678"]
