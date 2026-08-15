@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip --version)",
+      "Bash(python -m pip install --quiet --upgrade playwright requests)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(python -m unittest discover -s tests)",
+      "Bash(rm -f fbwatch.log)",
+      "Bash(python -c ' *)"
+    ]
+  }
+}

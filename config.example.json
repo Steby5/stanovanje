@@ -1,0 +1,45 @@
+{
+  "_comment": "Copy this file to config.json and fill in your Discord webhook URL.",
+
+  "discord_webhook_url": "https://discord.com/api/webhooks/XXXXXXXX/YYYYYYYY",
+  "discord_username": "Stanovanje Watcher",
+  "discord_avatar_url": "",
+  "embed_color": 1877042,
+  "include_images": true,
+  "notify_errors": true,
+
+  "_comment_control": "Optional: configure the watcher by typing commands in Discord. Needs a bot token (a webhook cannot receive messages). Leave the token empty to turn this off.",
+  "control_enabled": true,
+  "discord_bot_token": "",
+  "discord_control_channel_id": "",
+  "command_prefix": "!fbw",
+  "control_poll_seconds": 5,
+  "control_allowed_user_ids": [],
+
+  "_comment_telegram": "Optional: notifications-only delivery via Telegram. One bot serves everyone; each person's chat id goes in subscribers.json. Get a token from @BotFather.",
+  "telegram_bot_token": "",
+
+  "_comment_users": "Delete subscribers.json (or never create it) to run single-user off this file plus keywords.txt. See subscribers.example.json for the multi-user format.",
+  "subscribers_file": "subscribers.json",
+
+  "poll_interval_seconds": 300,
+  "jitter_seconds": 90,
+  "min_delay_between_groups": 6,
+  "max_delay_between_groups": 20,
+  "posts_per_group": 15,
+  "notify_on_first_run": false,
+  "restart_browser_every_cycles": 24,
+
+  "headless": true,
+  "browser_profile_dir": "browser_profile",
+  "locale": "sl-SI",
+  "timezone": "Europe/Ljubljana",
+  "block_media": true,
+  "page_timeout_seconds": 45,
+
+  "groups_file": "groups.txt",
+  "keywords_file": "keywords.txt",
+  "state_file": "state.json",
+  "log_file": "fbwatch.log",
+  "state_retention_days": 30
+}

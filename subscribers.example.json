@@ -1,0 +1,28 @@
+{
+  "_comment": "Copy to subscribers.json to run fbwatch for more than one person. Delete it (or never create it) and fbwatch runs single-user off config.json + keywords.txt. Each person gets their own trigger-word file and their own destination; Facebook is still scraped only once per cycle.",
+
+  "domin": {
+    "enabled": true,
+    "admin": true,
+    "keywords_file": "keywords.txt",
+    "discord_webhook_url": "https://discord.com/api/webhooks/XXXX/YYYY",
+    "discord_user_id": "",
+    "_note": "admin: may add people and groups from Discord. discord_user_id links a Discord account so this person can manage their own rules with `!fbw add ...`."
+  },
+
+  "ana": {
+    "enabled": true,
+    "keywords_file": "keywords/ana.txt",
+    "discord_webhook_url": "https://discord.com/api/webhooks/AAAA/BBBB",
+    "discord_user_id": "",
+    "_note": "Own webhook, own trigger words. Gets nothing until keywords/ana.txt has at least one rule."
+  },
+
+  "marko": {
+    "enabled": true,
+    "keywords_file": "keywords/marko.txt",
+    "telegram_chat_id": "123456789",
+    "groups": ["504531176006435"],
+    "_note": "Telegram instead of Discord, and only this one group. Leave `groups` out to watch all of them. Telegram is notifications-only - configuration stays in Discord."
+  }
+}

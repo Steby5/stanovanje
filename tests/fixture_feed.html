@@ -1,0 +1,54 @@
+<!doctype html>
+<!--
+  A stand-in for a Facebook group feed.  It reproduces the structural features
+  the extractor keys off - role="article" posts, a nested comment article, the
+  data-ad-* message container, permalink-shaped hrefs - so the extraction JS can
+  be tested without a login.  It is deliberately not a copy of Facebook markup.
+-->
+<html lang="sl">
+<head><meta charset="utf-8"><title>fixture feed</title></head>
+<body>
+
+<!-- Post 1: ordinary post, message in the data-ad-* container -->
+<div role="article" aria-label="Objava uporabnika Ana Novak">
+  <h3><a href="https://www.facebook.com/user/1001/">Ana Novak</a></h3>
+  <span><a href="https://www.facebook.com/groups/555000/posts/111222333/?ref=feed">4 h</a></span>
+  <div data-ad-preview="message">
+    <div dir="auto">Oddam lepo sobo v Ljubljani, Bežigrad.</div>
+    <div dir="auto">Na voljo od 1. 9., cena 400 EUR + stroški.</div>
+  </div>
+  <img src="https://scontent.xx.fbcdn.net/v/p720x720/photo1.jpg" alt="">
+  <div role="button">Všeč mi je</div>
+  <div role="button">Komentiraj</div>
+
+  <!-- a comment is also role="article" and must not be treated as a post -->
+  <div role="article" aria-label="Komentar uporabnika Bojan">
+    <div dir="auto">Je še prosto?</div>
+  </div>
+</div>
+
+<!-- Post 2: no data-ad-* container, so the fallback path has to find the text -->
+<div role="article">
+  <h3><a href="https://www.facebook.com/profile.php?id=1002">Marko Kranjc</a></h3>
+  <span><a href="https://www.facebook.com/groups/555000/permalink/444555666/">1 d</a></span>
+  <div dir="auto">Iščem sostanovalca za dvosobno stanovanje.</div>
+  <div role="button">Prikaži več</div>
+  <div role="button">Deli</div>
+  <span>12 komentarjev</span>
+</div>
+
+<!-- Post 3: permalink only in the query string, small avatar image to ignore -->
+<div role="article">
+  <h3><a href="https://www.facebook.com/user/1003/">Nepremicnine d.o.o.</a></h3>
+  <span><a href="https://www.facebook.com/groups/555000/?multi_permalink_id=777888999">2 d</a></span>
+  <div data-ad-rendering-role="story_message">
+    <div dir="auto">Oddamo garsonjero preko agencija, provizija 1 najemnina.</div>
+  </div>
+  <img src="https://scontent.xx.fbcdn.net/v/p60x60/avatar.jpg" alt="profile picture">
+</div>
+
+<!-- Not a post: no text and no permalink, must be skipped entirely -->
+<div role="article"><div role="button">Naloži več</div></div>
+
+</body>
+</html>

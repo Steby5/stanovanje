@@ -1,0 +1,21 @@
+# One Facebook group per line.  Any of these forms works:
+#
+#   https://www.facebook.com/groups/123456789012345
+#   https://www.facebook.com/groups/some-group-name
+#   123456789012345
+#   https://www.facebook.com/groups/123456789 | Nice short name
+#
+# The part after "|" is just the label shown in Discord and in the log.
+# Lines starting with # are ignored.  You must already be a member of any
+# private group you list here.
+#
+# Replace the examples below with the groups you actually want to watch.
+
+https://www.facebook.com/groups/339288206316 | STANOVANJA & DOM-najem, nakup, prenova
+https://www.facebook.com/groups/1506675343930214 | ŠTUDENTSKA STANOVANJA LJUBLJANA
+#https://www.facebook.com/groups/453858312614075 | MOJ DOM - oglasi nepremičnin v Sloveniji
+https://www.facebook.com/groups/504531176006435 | Apartments for Rent in Ljubljana - housing, Rooms, Studios, Sublets, Expats
+https://www.facebook.com/groups/stanovanjaosrednjeslovenska | Stanovanja osrednjeslovenska - oddam / najamem
+https://www.facebook.com/groups/studentska.stanovanja | Študentska stanovanja / Student housing
+https://www.facebook.com/groups/471204169680200 | STANOVANJA NAJEM,ODDAJA,NAKUP,PRODAJA
+https://www.facebook.com/groups/1630464503863326 | Oddam ali najamem stanovanje

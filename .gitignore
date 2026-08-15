@@ -1,0 +1,15 @@
+# Secrets and session data - never commit these.
+config.json
+subscribers.json
+subscribers.json.*
+browser_profile/
+state.json
+state.json.*
+fbwatch.log
+debug/
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/

@@ -1,0 +1,62 @@
+# Trigger words.  A post is sent to Discord when it matches at least ONE line
+# here and no "!" exclusion line.
+#
+# Matching ignores case and diacritics ("zelim" matches "Želim"), and plain
+# terms also match declined forms - "ljubljana" matches "v Ljubljani",
+# "garsonjera" matches "garsonjero".  Short words stay literal.
+#
+#   stanovanje             matches stanovanja, stanovanju, stanovanje...
+#   oddam + ljubljana      AND: both parts must appear in the post
+#   "oddam stanovanje"     exact phrase, no stemming
+#   =soba                  whole word only (won't match "posoda")
+#   re:\d{3,4}\s?(eur|€)   regular expression
+#   !agencija              EXCLUSION - skip any post containing this
+#
+# With no trigger words at all, this person receives nothing (rather than
+# everything) - so a newly added user isn't buried under every post.
+# Edit this file while the watcher is running; changes apply on the next cycle.
+# Test a line without touching Facebook:
+#   python main.py test-keywords "Oddam lepo sobo v Ljubljani, 400 EUR"
+
+# ---- what you're looking for --------------------------------------------
+oddam + stanovanje + ljubljana
+oddam + garsonjera + ljubljana
+oddajam + stanovanje + ljubljana
+najem + stanovanje + ljubljana
+garsonjera + ljubljana
+enosobno + ljubljana
+dvosobno + ljubljana
+"oddam stanovanje"
+"na voljo od"
+
+# ---- English-language groups --------------------------------------------
+# These groups are Ljubljana-only, so most rules here don't need "+ ljubljana"
+# the way the Slovenia-wide groups above do.
+"room for rent"
+"apartment for rent"
+"flat for rent"
+"studio for rent"
+"rooms for rent"
+"for rent" + ljubljana
+"available from"
+"renting out"
+"long term rental"
+"short term rental"
+sublet
+roommate + ljubljana
+
+# ---- things that are never interesting ----------------------------------
+# Delete or edit these to taste.  Exclusions win over triggers.
+!iscem sostanovalca
+!iscem stanovanje
+!nepremicninska agencija
+!posredniska provizija
+
+# English seekers.  Kept deliberately narrow: an exclusion silently drops a
+# post, so a broad one like "looking for a room" would also kill a genuine ad
+# saying "if you are looking for a room, I have one free".
+!"i am looking for"
+!"i'm looking for"
+!"we are looking for"
+!"we're looking for"
+!"i am searching for"
