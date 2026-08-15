@@ -53,7 +53,12 @@ class Config:
     jitter_seconds: int = 90
     min_delay_between_groups: float = 6.0
     max_delay_between_groups: float = 20.0
-    posts_per_group: int = 15
+    # How far down each feed to read.  The cost is steeply non-linear: the
+    # first few posts are already rendered, everything after that needs a
+    # scroll and a wait.  Measured, 6 takes ~4.5s a group and 10 takes ~13s,
+    # for barely more posts.  Raise it if the watcher is often stopped for
+    # hours, since it only sees as far back as this on the first poll after.
+    posts_per_group: int = 8
     notify_on_first_run: bool = False
     restart_browser_every_cycles: int = 24
 

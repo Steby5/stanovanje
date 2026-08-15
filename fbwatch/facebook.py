@@ -17,6 +17,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeout
 from playwright.sync_api import sync_playwright
 
 from .extract_js import (
+    EXPAND_SEE_MORE_JS,
     EXTRACT_POSTS_JS,
     LOGIN_MARKERS_JS,
     POST_MARKER_SELECTOR,
@@ -30,6 +31,10 @@ USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
+
+# How long to let a scroll settle before counting what loaded.  Long enough for
+# the feed to render the next batch, short enough not to dominate the scan.
+SCROLL_SETTLE_MS = (450, 850)
 
 CHROMIUM_ARGS = [
     "--disable-blink-features=AutomationControlled",
@@ -305,62 +310,68 @@ class FacebookScraper:
         log.debug("%s: extracted %d post(s)", group.name, len(posts))
         return posts
 
-    def _loaded_count(self) -> int:
-        """How many posts have actually rendered.
+    def _loaded_posts(self) -> list[dict]:
+        """The posts that have actually rendered so far.
 
-        Counts extracted posts rather than DOM nodes: the feed is virtualised,
-        so most `aria-posinset` items are empty placeholders and counting those
-        would stop the scroll long before any real posts had loaded.
+        Extracts rather than counting DOM nodes: the feed is virtualised, so
+        most `aria-posinset` items are empty placeholders and counting those
+        would stop the scroll long before any real post had loaded.
         """
         try:
-            return len(self.page.evaluate(EXTRACT_POSTS_JS))
+            return self.page.evaluate(EXTRACT_POSTS_JS)
         except PlaywrightError:
-            return 0
+            return []
 
     def _scroll_until(self, wanted: int, max_scrolls: int = 12, on_idle=None) -> None:
-        """Lazy-loaded feed: scroll until enough posts exist or it stops growing."""
+        """Lazy-loaded feed: scroll until enough posts exist or it stops growing.
+
+        Stopping early at the first already-handled post would be the obvious
+        optimisation, but it cannot be done safely here: ids are hashed from
+        the post text, and during scrolling that text is still truncated -
+        "See more" has not been clicked yet - so nothing matches what was
+        stored.  Making the hash truncation-proof would mean hashing a short
+        prefix, which collides across similar posts by the same author and
+        costs listings.  Depth is capped by `posts_per_group` instead.
+        """
         page = self.page
         idle = on_idle or (lambda: None)
         stalled = 0
+        posts = self._loaded_posts()
         for _ in range(max_scrolls):
-            count = self._loaded_count()
+            count = len(posts)
             if count >= wanted:
                 return
             page.mouse.wheel(0, 2200)
-            page.wait_for_timeout(random.randint(700, 1400))
+            # Short settle while the feed is keeping up, longer once it isn't:
+            # a slow batch must not be mistaken for the end of the feed, which
+            # silently costs posts.
+            settle = random.randint(SCROLL_SETTLE_MS[0], SCROLL_SETTLE_MS[1])
+            page.wait_for_timeout(settle * (1 + stalled))
             idle()
-            new_count = self._loaded_count()
-            if new_count <= count:
+            # Carried into the next pass rather than re-measured at the top of
+            # it, since measuring means running the extractor over the feed.
+            posts = self._loaded_posts()
+            if len(posts) <= count:
                 stalled += 1
-                if stalled >= 2:
-                    return  # end of the feed
+                if stalled >= 3:
+                    return  # genuinely the end of the feed
             else:
                 stalled = 0
 
     def _expand_see_more(self, max_clicks: int = 40) -> None:
-        """Click the truncation toggles so full post text is in the DOM."""
-        page = self.page
-        clicks = 0
+        """Click the truncation toggles so full post text is in the DOM.
+
+        Done inside the page: reading each button's label from Python cost a
+        round trip apiece, and a loaded feed carries several hundred buttons.
+        """
         try:
-            buttons = page.query_selector_all(
-                'div[role="feed"] div[role="button"], div[role="article"] div[role="button"]'
+            clicked = self.page.evaluate(
+                EXPAND_SEE_MORE_JS, [sorted(SEE_MORE_LABELS), max_clicks]
             )
         except PlaywrightError:
             return
-
-        for button in buttons:
-            if clicks >= max_clicks:
-                break
-            try:
-                label = (button.inner_text() or "").strip().lower()
-                if label in SEE_MORE_LABELS:
-                    button.click(timeout=2500)
-                    clicks += 1
-                    page.wait_for_timeout(90)
-            except (PlaywrightError, PlaywrightTimeout):
-                continue  # detached, covered, or navigated - not worth retrying
-        if clicks:
-            page.wait_for_timeout(350)
+        if clicked:
+            self.page.wait_for_timeout(400)  # let the expanded text render
 
     @staticmethod
     def _canonical_url(href: str, group: Group) -> str:

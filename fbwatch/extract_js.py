@@ -255,6 +255,25 @@ POST_MARKER_SELECTOR = (
     'div[role="article"]'
 )
 
+# Clicking the truncation toggles from Python meant one round trip per button
+# to read its label, and a feed carries hundreds of buttons - it cost about two
+# seconds a group.  Doing the whole pass in the page costs one round trip.
+EXPAND_SEE_MORE_JS = r"""
+([labels, max]) => {
+  let clicked = 0;
+  const nodes = document.querySelectorAll(
+    'div[role="feed"] div[role="button"], div[role="article"] div[role="button"]'
+  );
+  for (const el of nodes) {
+    if (clicked >= max) break;
+    const label = (el.innerText || '').trim().toLowerCase();
+    if (!labels.includes(label)) continue;
+    try { el.click(); clicked++; } catch (e) { /* detached or covered */ }
+  }
+  return clicked;
+}
+"""
+
 # A logged-out or checkpointed page shows one of these instead of the feed.
 LOGIN_MARKERS_JS = r"""
 () => {

@@ -36,7 +36,7 @@ class StubScraper:
         self.calls = 0
         self.idle_calls = 0
 
-    def scrape_group(self, group, limit=None, on_idle=None):
+    def scrape_group(self, group, limit=None, on_idle=None, already_seen=None):
         self.calls += 1
         if on_idle:
             on_idle()  # the real scraper yields while waiting on the page

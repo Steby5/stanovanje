@@ -306,7 +306,7 @@ class TestCommandsDuringACycle(SharedServerTestCase):
         self.session.inbox = [[message("!fbw pause", author_id="42", username="domin")]]
 
         class Scraper:
-            def scrape_group(self, group, limit=None, on_idle=None):
+            def scrape_group(self, group, limit=None, on_idle=None, already_seen=None):
                 return []
 
         totals = self.watcher.run_cycle(Scraper())

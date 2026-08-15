@@ -26,7 +26,7 @@
   "jitter_seconds": 90,
   "min_delay_between_groups": 6,
   "max_delay_between_groups": 20,
-  "posts_per_group": 15,
+  "posts_per_group": 8,
   "notify_on_first_run": false,
   "restart_browser_every_cycles": 24,
 
