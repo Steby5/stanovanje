@@ -222,7 +222,14 @@ Check it:
 python main.py test-control
 ```
 
-Commands are read while `python main.py run` is going, within a few seconds.
+> **The bot always shows as offline in Discord, and always will.** It uses the
+> REST API and never opens a gateway (websocket) connection, and presence comes
+> only from that. An offline bot that still reads and answers commands is the
+> normal, working state — don't chase it.
+
+**Commands are only answered while `python main.py run` is going.** Nothing reads
+the channel otherwise, so `check` and a stopped watcher both look like a dead bot.
+While it is running, replies take a few seconds.
 
 ### Commands
 

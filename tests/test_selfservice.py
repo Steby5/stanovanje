@@ -285,6 +285,38 @@ class TestEndToEnd(SharedServerTestCase):
         self.assertEqual(self.batches, [(f"channel:{OTHER_CHANNEL}", ["ana"])])
 
 
+class TestCommandsDuringACycle(SharedServerTestCase):
+    """Commands must be answered mid-cycle, not only between cycles.
+
+    A pass over several groups takes minutes; a command left unanswered that
+    long looks like a dead bot, which is exactly how this was first reported.
+    """
+
+    def test_the_between_groups_pause_reads_discord(self):
+        self.cfg.min_delay_between_groups = 0.01
+        self.cfg.max_delay_between_groups = 0.02
+        self.cfg.control_poll_seconds = 2  # longer than the pause
+        (self.base / "groups.txt").write_text(
+            "https://www.facebook.com/groups/555000 | One\n"
+            "https://www.facebook.com/groups/777000 | Two\n",
+            encoding="utf-8",
+        )
+        self.watcher.reload_inputs()
+        self.watcher.control = self.control
+        self.session.inbox = [[message("!fbw pause", author_id="42", username="domin")]]
+
+        class Scraper:
+            def scrape_group(self, group, limit=None):
+                return []
+
+        self.watcher.run_cycle(Scraper())
+        self.assertTrue(self.watcher.paused)  # handled during the cycle
+
+    def test_a_sleep_without_control_still_sleeps(self):
+        self.watcher.control = None
+        self.assertEqual(self.watcher._sleep(0.01), {})
+
+
 class TestSafeName(unittest.TestCase):
     def test_usernames_become_usable_names(self):
         self.assertEqual(_safe_name("Domin"), "domin")

@@ -283,11 +283,15 @@ def cmd_test_control(cfg: Config, args) -> int:
         return 1
 
     control.reply(
-        f":satellite: **fbwatch is listening here.** Type `{cfg.command_prefix} help` "
-        "for the command list."
+        f":satellite: **fbwatch can post here.** Commands like "
+        f"`{cfg.command_prefix} help` are answered **only while the watcher is "
+        "running** (`python main.py run`) — and the bot always shows as *offline*, "
+        "because it talks to Discord over the REST API and never opens a gateway "
+        "connection. Offline is normal; silence when `run` isn't going is expected."
     )
     log.info("Control channel works - check Discord for the message.")
-    log.info("Commands are read while `python main.py run` is going.")
+    log.info("Commands are read while `python main.py run` is going, not otherwise.")
+    log.info("The bot always shows offline in Discord; that is normal for this design.")
     return 0
 
 

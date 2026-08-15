@@ -251,6 +251,19 @@ From then on, matching is strict: unlinked people can only run `help` and
 
 ---
 
+## The bot looks offline
+
+It always does, and that's normal — it talks to Discord over the REST API and
+never opens the connection that Discord uses to decide who's online. An offline
+bot that answers commands is working correctly.
+
+What does matter: **commands are only answered while the watcher is running.** If
+nobody has `python main.py run` going, the channel isn't being read at all and
+your commands sit there unanswered. `!fbw status` is the quick check — a reply
+means it's alive.
+
+---
+
 ## Not getting notifications?
 
 Work down this list — it's ordered by how often each one is the cause.

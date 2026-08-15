@@ -188,7 +188,10 @@ class Watcher:
                     self.cfg.min_delay_between_groups, self.cfg.max_delay_between_groups
                 )
                 log.debug("waiting %.1fs before the next group", pause)
-                time.sleep(pause)
+                # Read Discord here too, not only between cycles: a full pass
+                # over several groups takes minutes, and a command typed during
+                # one would otherwise sit unanswered long enough to look broken.
+                self._sleep(pause)
 
         return totals
 
@@ -295,26 +298,31 @@ class Watcher:
             "python main.py users <name> --discord-id <your Discord user id>"
         )
 
-    def _wait(self, seconds: float) -> None:
-        """Sleep until the next cycle, staying responsive to Discord commands.
+    def _sleep(self, seconds: float) -> dict:
+        """Sleep, answering Discord commands while we wait.
 
-        Returns early when someone asks for an immediate check.
+        Returns the accumulated control flags so a caller can act on them.
         """
+        flags: dict = {}
         deadline = time.monotonic() + seconds
         if self.control is None or not self.control.enabled:
             time.sleep(max(0.0, seconds))
-            return
+            return flags
 
         step = self.cfg.control_poll_seconds
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                return
+                return flags
             time.sleep(min(step, remaining))
-            flags = self.control.poll()
+            flags.update(self.control.poll())
             if flags.get("force_check"):
-                log.info("immediate check requested from Discord")
-                return
+                return flags
+
+    def _wait(self, seconds: float) -> None:
+        """Wait for the next cycle, cutting it short if someone asks."""
+        if self._sleep(seconds).get("force_check"):
+            log.info("immediate check requested from Discord")
 
     # -- error reporting -------------------------------------------------
     def _note_failure(self, count: int) -> None:
