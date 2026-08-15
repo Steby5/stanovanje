@@ -604,6 +604,30 @@ Run `python main.py dump` and look at `debug/dump_<group>.json`: if `text_source
 says `fallback`, the primary selectors in `fbwatch/extract_js.py` need updating;
 the saved `.html` shows the current structure.
 
+**"Chromium could not start"**, or Playwright logs `exitCode=127` — the browser
+binary is there but its system libraries aren't. That's the usual state of a
+fresh Linux server, because `playwright install chromium` downloads the browser
+without them:
+
+```bash
+sudo python -m playwright install-deps chromium   # needs root
+python -m playwright install chromium
+```
+
+`--with-deps` does both in one go, if you can run it as root:
+
+```bash
+sudo python -m playwright install --with-deps chromium
+```
+
+On a minimal container also check `python -m playwright install chromium` was run
+as the *same user* that runs the watcher — browsers land in that user's home
+directory, so installing as root and running as someone else silently misses.
+
+The other cause of a failed launch is two copies running against one
+`browser_profile/`. Chromium locks a profile; give the second instance its own
+`browser_profile_dir`.
+
 **Nothing at all happens** — check `fbwatch.log`. If Facebook is showing a
 checkpoint (unusual-activity prompt), run `python main.py login` and clear it in
 the visible browser window.

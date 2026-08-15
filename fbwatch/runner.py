@@ -10,7 +10,7 @@ import requests
 
 from .control import DiscordControl
 from .delivery import Dispatcher
-from .facebook import FacebookScraper, LoginRequired, ScrapeError
+from .facebook import BrowserUnavailable, FacebookScraper, LoginRequired, ScrapeError
 from .models import Group, Post, load_groups
 from .notify import DiscordNotifier
 from .store import SeenStore
@@ -228,7 +228,13 @@ class Watcher:
                     scraper = None
                 if scraper is None:
                     scraper = FacebookScraper(self.cfg)
-                    scraper.start()
+                    try:
+                        scraper.start()
+                    except BrowserUnavailable as exc:
+                        for line in str(exc).splitlines():
+                            log.error("%s", line)
+                        self._alert(f"fbwatch cannot start Chromium: {str(exc).splitlines()[1]}")
+                        return 3
                     if not scraper.is_logged_in():
                         log.error("Not logged in. Run:  python main.py login")
                         self._alert("Facebook session is gone - run `python main.py login`.")

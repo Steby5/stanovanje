@@ -58,6 +58,44 @@ def facebook_cookies(cookies: list[dict]) -> list[dict]:
     return out
 
 
+class BrowserUnavailable(RuntimeError):
+    """Chromium could not be started at all."""
+
+
+def _launch_advice(exc: Exception, profile: Path) -> str:
+    """Translate a Chromium launch failure into the thing to actually do.
+
+    Playwright reports these as a wall of subprocess output; the useful signal
+    is buried in it.  Exit code 127 in particular means the binary or one of
+    its shared libraries is missing, which on Linux is the usual case of having
+    downloaded the browser without its system dependencies.
+    """
+    detail = str(exc)
+    lines = ["Chromium could not start."]
+
+    if "127" in detail or "error while loading shared libraries" in detail:
+        lines.append(
+            "It is missing system libraries. On Debian/Ubuntu:\n"
+            "    sudo python -m playwright install-deps chromium\n"
+            "    python -m playwright install chromium"
+        )
+    elif "Executable doesn't exist" in detail or "please run" in detail.lower():
+        lines.append("The browser is not downloaded yet:\n    python -m playwright install chromium")
+    elif "ProcessSingleton" in detail or "SingletonLock" in detail or "in use" in detail:
+        lines.append(
+            f"Another instance is already using {profile}. Stop the other fbwatch, "
+            "or give this one its own browser_profile_dir."
+        )
+    else:
+        lines.append(
+            "If this is a fresh machine, install the browser and its dependencies:\n"
+            "    python -m playwright install --with-deps chromium"
+        )
+
+    lines.append(f"Original error: {detail.strip().splitlines()[0][:300]}")
+    return "\n".join(lines)
+
+
 class LoginRequired(RuntimeError):
     """The saved session is gone or Facebook wants a checkpoint cleared."""
 
@@ -89,15 +127,19 @@ class FacebookScraper:
         profile.mkdir(parents=True, exist_ok=True)
 
         self._pw = sync_playwright().start()
-        self._ctx = self._pw.chromium.launch_persistent_context(
-            user_data_dir=str(profile),
-            headless=self.headless,
-            args=CHROMIUM_ARGS,
-            user_agent=USER_AGENT,
-            locale=self.cfg.locale,
-            timezone_id=self.cfg.timezone,
-            viewport={"width": 1366, "height": 900},
-        )
+        try:
+            self._ctx = self._pw.chromium.launch_persistent_context(
+                user_data_dir=str(profile),
+                headless=self.headless,
+                args=CHROMIUM_ARGS,
+                user_agent=USER_AGENT,
+                locale=self.cfg.locale,
+                timezone_id=self.cfg.timezone,
+                viewport={"width": 1366, "height": 900},
+            )
+        except Exception as exc:  # noqa: BLE001 - turn a cryptic failure into advice
+            self.stop()
+            raise BrowserUnavailable(_launch_advice(exc, profile)) from exc
         self._ctx.add_init_script(STEALTH_JS)
         self._ctx.set_default_timeout(self.cfg.page_timeout_seconds * 1000)
 

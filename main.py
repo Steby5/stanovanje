@@ -24,6 +24,7 @@ import sys
 from pathlib import Path
 
 from fbwatch.config import WEBHOOK_ENV_VAR, Config
+from fbwatch.facebook import BrowserUnavailable
 from fbwatch.matcher import KeywordMatcher
 from fbwatch.models import load_groups
 from fbwatch.notify import DiscordNotifier
@@ -555,6 +556,10 @@ def main(argv: list[str] | None = None) -> int:
     setup_logging(cfg, args.verbose)
     try:
         return args.func(cfg, args)
+    except BrowserUnavailable as exc:
+        for line in str(exc).splitlines():
+            log.error("%s", line)
+        return 3
     except FileNotFoundError as exc:
         log.error("%s", exc)
         return 1
