@@ -230,10 +230,11 @@ python main.py test-control
 **Commands are only answered while `python main.py run` is going.** Nothing reads
 the channel otherwise, so `check` and a stopped watcher both look like a dead bot.
 
-While it is running, replies take a couple of seconds. The scraper yields at every
-point it is waiting on the page, so commands are answered mid-scrape rather than
-queuing behind a full pass over your groups. `control_poll_seconds` (default 2)
-sets the cadence; 1 is allowed if you want it snappier.
+While it is running, replies take a couple of seconds, whatever the scan is
+doing. Post hunting and commands run on separate threads, so editing your
+trigger words does not wait for a page load, and a scan in progress does not
+delay a reply. `control_poll_seconds` (default 2) sets the cadence; 1 is allowed
+if you want it snappier.
 
 ### Commands
 

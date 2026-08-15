@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import random
+import threading
 import time
 
 import requests
@@ -38,7 +39,13 @@ class Watcher:
         self._consecutive_failures = 0
         self._alerted = False
         self._adopted_legacy = False
-        self._last_control_poll = 0.0
+        # Commands run on their own thread so they are answered while a scrape
+        # is in progress.  This guards the state both threads touch; the store
+        # guards itself.  Never held across a browser call or an HTTP send.
+        self._lock = threading.RLock()
+        self._control_thread: threading.Thread | None = None
+        self._stopping = threading.Event()
+        self._wake = threading.Event()
 
         # Live state, reported by the Discord `status` command.
         self.paused = False
@@ -52,17 +59,21 @@ class Watcher:
     def reload_inputs(self) -> None:
         """Re-read groups, subscribers and every trigger-word file.
 
-        Called each cycle, so edits (from a text editor or from Discord) apply
-        without a restart.
+        Called each cycle, and by the control thread whenever a command edits
+        one of those files.  The three attributes are swapped under the lock so
+        the watch loop can never read a new subscriber list against the old
+        dispatcher.
         """
-        self.groups = load_groups(self.cfg.groups_path)
-        if not self.groups:
+        groups = load_groups(self.cfg.groups_path)
+        if not groups:
             raise ValueError(f"{self.cfg.groups_path} has no groups in it")
+        subscribers = load_subscribers(self.cfg)
+        dispatcher = self._dispatcher_factory(self.cfg, subscribers, session=self.session)
 
-        self.subscribers = load_subscribers(self.cfg)
-        self.dispatcher = self._dispatcher_factory(
-            self.cfg, self.subscribers, session=self.session
-        )
+        with self._lock:
+            self.groups = groups
+            self.subscribers = subscribers
+            self.dispatcher = dispatcher
 
         # State written before multi-user support belongs to the primary user.
         if not self._adopted_legacy:
@@ -85,7 +96,7 @@ class Watcher:
         all, instead of the same listing arriving once per person.  Posts are
         handled oldest-first so they arrive in the order they were posted.
         """
-        posts: list[Post] = scraper.scrape_group(group, on_idle=self._pump_control)
+        posts: list[Post] = scraper.scrape_group(group)
         totals = {"seen": len(posts), "new": 0, "matched": 0, "sent": 0}
 
         watchers = [s for s in self.subscribers if s.watches(group) and s.deliverable]
@@ -98,33 +109,38 @@ class Watcher:
         seeded = {s.name: 0 for s in watchers}
 
         for post in reversed(posts):
-            matches: list[tuple] = []
+            # Deciding who gets this post touches the shared state, so it runs
+            # under the lock - but only for microseconds.  Delivery is HTTP and
+            # is deliberately left outside it, or a batch of notifications
+            # would block commands for seconds.
+            with self._lock:
+                matches: list[tuple] = []
+                for sub in watchers:
+                    if self.store.has(sub.name, group.slug, post.post_id):
+                        continue
+                    totals["new"] += 1
+                    # A dry run must leave no trace, or testing your rules
+                    # would silently consume the posts a real run would send.
+                    if notify:
+                        self.store.add(sub.name, group.slug, post.post_id)
 
-            for sub in watchers:
-                if self.store.has(sub.name, group.slug, post.post_id):
-                    continue
-                totals["new"] += 1
-                # A dry run must leave no trace, or testing your rules would
-                # silently consume the posts a real run would have sent.
-                if notify:
-                    self.store.add(sub.name, group.slug, post.post_id)
+                    if first_time[sub.name] and not self.cfg.notify_on_first_run:
+                        seeded[sub.name] += 1
+                        continue
 
-                if first_time[sub.name] and not self.cfg.notify_on_first_run:
-                    seeded[sub.name] += 1
-                    continue
+                    result = sub.matcher.match(post.text)
+                    if not result.matched:
+                        log.debug("%s: skip %s (%s)", sub.name, post.url, result.reason)
+                        continue
+                    totals["matched"] += 1
 
-                result = sub.matcher.match(post.text)
-                if not result.matched:
-                    log.debug("%s: skip %s (%s)", sub.name, post.url, result.reason)
-                    continue
-                totals["matched"] += 1
+                    # Paused means "mute": keep recording so resuming does not
+                    # replay everything that piled up in the meantime.
+                    if self.paused:
+                        continue
 
-                # Paused means "mute": keep recording so resuming does not
-                # replay everything that piled up in the meantime.
-                if self.paused:
-                    continue
-
-                matches.append((sub, result))
+                    matches.append((sub, result))
+                dispatcher = self.dispatcher
 
             if not matches:
                 continue
@@ -135,7 +151,7 @@ class Watcher:
                 totals["sent"] += len(matches)
                 continue
 
-            delivered = self.dispatcher.deliver(post, matches)
+            delivered = dispatcher.deliver(post, matches)
             totals["sent"] += len(delivered)
             for sub, result in matches:
                 if sub.name in delivered:
@@ -189,10 +205,7 @@ class Watcher:
                     self.cfg.min_delay_between_groups, self.cfg.max_delay_between_groups
                 )
                 log.debug("waiting %.1fs before the next group", pause)
-                # Read Discord here too, not only between cycles: a full pass
-                # over several groups takes minutes, and a command typed during
-                # one would otherwise sit unanswered long enough to look broken.
-                self._sleep(pause)
+                time.sleep(pause)
 
         return totals
 
@@ -221,6 +234,7 @@ class Watcher:
         if self.control.enabled:
             self.control.start()
             self._warn_if_admin_unclaimed()
+            self.start_control_thread()
         elif self.cfg.control_enabled and self.cfg.discord_bot_token:
             log.warning("Discord control is configured but not usable - see the log above.")
 
@@ -277,6 +291,7 @@ class Watcher:
             log.info("Stopped.")
             return 0
         finally:
+            self.stop_control_thread()
             if scraper:
                 scraper.stop()
             self.store.save()
@@ -299,51 +314,49 @@ class Watcher:
             "python main.py users <name> --discord-id <your Discord user id>"
         )
 
-    def _pump_control(self) -> None:
-        """Answer Discord commands from inside a long scrape.
+    # -- the command thread -----------------------------------------------
+    def start_control_thread(self) -> None:
+        """Answer Discord commands independently of the scan.
 
-        Called at the points where the scraper is waiting on the page.  Runs on
-        the same thread as everything else, so a command that reloads the
-        subscribers cannot race the matching loop - it lands before the posts
-        for this group are filtered.
+        Post hunting is a long sequence of blocking browser calls; a single
+        thread cannot both do that and stay responsive.  This thread only ever
+        touches files, the store and Discord's HTTP API - never the browser,
+        which Playwright does not allow off its own thread.
         """
         if self.control is None or not self.control.enabled:
             return
-        now = time.monotonic()
-        if now - self._last_control_poll < self.cfg.control_poll_seconds:
+        if self._control_thread and self._control_thread.is_alive():
             return
-        self._last_control_poll = now
-        try:
-            self.control.poll()
-        except Exception as exc:  # noqa: BLE001 - a bad command must not stop a scrape
-            log.exception("Discord control poll failed: %s", exc)
 
-    def _sleep(self, seconds: float) -> dict:
-        """Sleep, answering Discord commands while we wait.
+        def loop() -> None:
+            while not self._stopping.is_set():
+                try:
+                    with self._lock:
+                        flags = self.control.poll()
+                except Exception as exc:  # noqa: BLE001 - keep answering commands
+                    log.exception("Discord control poll failed: %s", exc)
+                    flags = {}
+                if flags.get("force_check"):
+                    log.info("immediate check requested from Discord")
+                    self._wake.set()
+                self._stopping.wait(self.cfg.control_poll_seconds)
 
-        Returns the accumulated control flags so a caller can act on them.
-        """
-        flags: dict = {}
-        deadline = time.monotonic() + seconds
-        if self.control is None or not self.control.enabled:
-            time.sleep(max(0.0, seconds))
-            return flags
+        self._control_thread = threading.Thread(
+            target=loop, name="fbwatch-control", daemon=True
+        )
+        self._control_thread.start()
+        log.info("Commands are handled separately, so they answer during a scan.")
 
-        step = self.cfg.control_poll_seconds
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return flags
-            time.sleep(min(step, remaining))
-            self._last_control_poll = time.monotonic()
-            flags.update(self.control.poll())
-            if flags.get("force_check"):
-                return flags
+    def stop_control_thread(self) -> None:
+        self._stopping.set()
+        if self._control_thread and self._control_thread.is_alive():
+            self._control_thread.join(timeout=self.cfg.control_poll_seconds + 5)
+        self._control_thread = None
 
     def _wait(self, seconds: float) -> None:
-        """Wait for the next cycle, cutting it short if someone asks."""
-        if self._sleep(seconds).get("force_check"):
-            log.info("immediate check requested from Discord")
+        """Wait for the next cycle, cut short if someone asks for a check."""
+        if self._wake.wait(timeout=max(0.0, seconds)):
+            self._wake.clear()
 
     # -- error reporting -------------------------------------------------
     def _note_failure(self, count: int) -> None:

@@ -262,6 +262,10 @@ nobody has `python main.py run` going, the channel isn't being read at all and
 your commands sit there unanswered. `!fbw status` is the quick check — a reply
 means it's alive.
 
+While it is running, you can change your trigger words at any time, including
+in the middle of a scan — commands are handled separately from the hunting, so
+you never have to wait for it to finish.
+
 ---
 
 ## Not getting notifications?

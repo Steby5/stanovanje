@@ -230,25 +230,19 @@ class FacebookScraper:
         return len(usable)
 
     # -- scraping -------------------------------------------------------
-    def scrape_group(
-        self, group: Group, limit: int | None = None, on_idle=None
-    ) -> list[Post]:
+    def scrape_group(self, group: Group, limit: int | None = None) -> list[Post]:
         """Load a group's newest-first feed and return the posts on it.
 
-        `on_idle` is called at each point where we are waiting on the page
-        rather than computing.  The watcher uses it to answer Discord commands
-        mid-scrape; without it a command typed during a pass over several
-        groups sits unanswered long enough to look like a dead bot.
+        Commands are answered on their own thread, so nothing here needs to
+        yield for them.
         """
         limit = limit or self.cfg.posts_per_group
         page = self.page
-        idle = on_idle or (lambda: None)
 
         try:
             page.goto(group.feed_url, wait_until="domcontentloaded")
         except PlaywrightTimeout as exc:
             raise ScrapeError(f"timed out loading {group.feed_url}") from exc
-        idle()
 
         blocked = page.evaluate(LOGIN_MARKERS_JS)
         if blocked:
@@ -262,7 +256,6 @@ class FacebookScraper:
                 page.wait_for_selector(POST_MARKER_SELECTOR, timeout=3000)
                 break
             except PlaywrightTimeout:
-                idle()
                 if time.monotonic() >= deadline:
                     # An empty group, a members-only wall, or a layout change.
                     if page.evaluate(LOGIN_MARKERS_JS):
@@ -271,10 +264,8 @@ class FacebookScraper:
                         f"{group.name}: no posts found - are you a member of this group?"
                     ) from None
 
-        self._scroll_until(limit, on_idle=idle)
-        idle()
+        self._scroll_until(limit)
         self._expand_see_more()
-        idle()
 
         try:
             raw = page.evaluate(EXTRACT_POSTS_JS)
@@ -322,7 +313,7 @@ class FacebookScraper:
         except PlaywrightError:
             return []
 
-    def _scroll_until(self, wanted: int, max_scrolls: int = 12, on_idle=None) -> None:
+    def _scroll_until(self, wanted: int, max_scrolls: int = 12) -> None:
         """Lazy-loaded feed: scroll until enough posts exist or it stops growing.
 
         Stopping early at the first already-handled post would be the obvious
@@ -334,7 +325,6 @@ class FacebookScraper:
         costs listings.  Depth is capped by `posts_per_group` instead.
         """
         page = self.page
-        idle = on_idle or (lambda: None)
         stalled = 0
         posts = self._loaded_posts()
         for _ in range(max_scrolls):
@@ -347,7 +337,6 @@ class FacebookScraper:
             # silently costs posts.
             settle = random.randint(SCROLL_SETTLE_MS[0], SCROLL_SETTLE_MS[1])
             page.wait_for_timeout(settle * (1 + stalled))
-            idle()
             # Carried into the next pass rather than re-measured at the top of
             # it, since measuring means running the extractor over the feed.
             posts = self._loaded_posts()

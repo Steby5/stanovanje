@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -285,49 +287,104 @@ class TestEndToEnd(SharedServerTestCase):
         self.assertEqual(self.batches, [(f"channel:{OTHER_CHANNEL}", ["ana"])])
 
 
-class TestCommandsDuringACycle(SharedServerTestCase):
-    """Commands must be answered mid-cycle, not only between cycles.
+class TestCommandsDuringAScan(SharedServerTestCase):
+    """Post hunting and commands must not block each other.
 
-    A pass over several groups takes minutes; a command left unanswered that
-    long looks like a dead bot, which is exactly how this was first reported.
+    Scraping is a long run of blocking browser calls; before the command
+    thread existed, a command typed during one waited for it, which is how
+    this was first reported ("the bot is not online").
     """
 
-    def test_the_between_groups_pause_reads_discord(self):
-        self.cfg.min_delay_between_groups = 0.01
-        self.cfg.max_delay_between_groups = 0.02
-        self.cfg.control_poll_seconds = 2  # longer than the pause
-        (self.base / "groups.txt").write_text(
-            "https://www.facebook.com/groups/555000 | One\n"
-            "https://www.facebook.com/groups/777000 | Two\n",
-            encoding="utf-8",
-        )
-        self.watcher.reload_inputs()
+    def test_a_command_is_answered_while_a_scan_is_running(self):
+        self.cfg.control_poll_seconds = 1
         self.watcher.control = self.control
         self.session.inbox = [[message("!fbw pause", author_id="42", username="domin")]]
 
-        class Scraper:
-            def scrape_group(self, group, limit=None, on_idle=None, already_seen=None):
+        class SlowScraper:
+            """Stands in for a page load: blocks without touching the lock."""
+
+            def scrape_group(self, group, limit=None):
+                time.sleep(1.5)
                 return []
 
-        totals = self.watcher.run_cycle(Scraper())
-        self.assertEqual(totals["errors"], 0)
-        self.assertTrue(self.watcher.paused)  # handled during the cycle
+        self.watcher.start_control_thread()
+        try:
+            started = time.monotonic()
+            self.watcher.check_group(SlowScraper(), GROUP)
+            elapsed = time.monotonic() - started
+        finally:
+            self.watcher.stop_control_thread()
 
-    def test_a_command_is_answered_from_inside_a_scrape(self):
-        # The scraper yields via on_idle while waiting on the page; a command
-        # typed then must be handled without waiting for the group to finish.
-        self.cfg.control_poll_seconds = 0
+        self.assertGreater(elapsed, 1.0)        # the scan really did block
+        self.assertTrue(self.watcher.paused)    # ...and the command still landed
+
+    def test_the_thread_stops_cleanly(self):
         self.watcher.control = self.control
-        self.session.inbox = [[message("!fbw pause", author_id="42", username="domin")]]
+        self.watcher.start_control_thread()
+        self.assertTrue(self.watcher._control_thread.is_alive())
+        self.watcher.stop_control_thread()
+        self.assertIsNone(self.watcher._control_thread)
 
-        scraper = StubScraper([])
-        self.watcher.check_group(scraper, GROUP)
-        self.assertEqual(scraper.idle_calls, 1)
-        self.assertTrue(self.watcher.paused)
+    def test_starting_twice_does_not_stack_threads(self):
+        self.watcher.control = self.control
+        self.watcher.start_control_thread()
+        first = self.watcher._control_thread
+        self.watcher.start_control_thread()
+        try:
+            self.assertIs(first, self.watcher._control_thread)
+        finally:
+            self.watcher.stop_control_thread()
 
-    def test_a_sleep_without_control_still_sleeps(self):
+    def test_no_thread_without_a_control_channel(self):
         self.watcher.control = None
-        self.assertEqual(self.watcher._sleep(0.01), {})
+        self.watcher.start_control_thread()
+        self.assertIsNone(self.watcher._control_thread)
+
+    def test_check_now_cuts_the_wait_short(self):
+        self.watcher._wake.set()
+        started = time.monotonic()
+        self.watcher._wait(30)
+        self.assertLess(time.monotonic() - started, 1.0)
+        self.assertFalse(self.watcher._wake.is_set())  # consumed, not sticky
+
+
+class TestStoreUnderConcurrency(SharedServerTestCase):
+    """The store is reached from both threads, so it guards itself."""
+
+    def test_recording_posts_while_a_subscriber_is_removed(self):
+        # Without the lock this raises "dictionary changed size during
+        # iteration" out of save(), losing the state file for that cycle.
+        store = self.watcher.store
+        for i in range(200):
+            store.add(f"user{i % 5}", "555000", f"post{i}")
+
+        errors = []
+
+        def churn():
+            try:
+                for i in range(300):
+                    store.add("writer", "555000", f"p{i}")
+                    store.save(force=True)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        def remove():
+            try:
+                for i in range(300):
+                    store.add(f"tmp{i}", "555000", "x")
+                    store.drop_subscriber(f"tmp{i}")
+                    store.prune()
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [threading.Thread(target=churn), threading.Thread(target=remove)]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join(timeout=30)
+
+        self.assertEqual(errors, [])
+        self.assertTrue(store.has("writer", "555000", "p299"))
 
 
 class TestSafeName(unittest.TestCase):

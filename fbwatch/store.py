@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -22,6 +23,10 @@ class SeenStore:
     def __init__(self, path: Path, retention_days: int = 30):
         self.path = Path(path)
         self.retention_days = retention_days
+        # The watch loop and the Discord control thread both reach in here:
+        # the loop records posts while a command may be removing a subscriber,
+        # and save() walks the whole structure while that happens.
+        self._lock = threading.RLock()
         self._subs: dict[str, dict[str, dict[str, float]]] = {}
         self._legacy: dict[str, dict[str, float]] = {}
         self._dirty = False
@@ -59,78 +64,93 @@ class SeenStore:
         Called once at startup with the primary subscriber's name.  Without
         this, upgrading would look like a first run and re-notify everything.
         """
-        if not self._legacy:
-            return 0
-        target = self._subs.setdefault(subscriber, {})
-        moved = 0
-        for slug, posts in self._legacy.items():
-            existing = target.setdefault(slug, {})
-            for post_id, when in posts.items():
-                existing.setdefault(post_id, when)
-                moved += 1
-        self._legacy = {}
-        self._dirty = True
-        return moved
+        with self._lock:
+            if not self._legacy:
+                return 0
+            target = self._subs.setdefault(subscriber, {})
+            moved = 0
+            for slug, posts in self._legacy.items():
+                existing = target.setdefault(slug, {})
+                for post_id, when in posts.items():
+                    existing.setdefault(post_id, when)
+                    moved += 1
+            self._legacy = {}
+            self._dirty = True
+            return moved
 
     # -- queries ---------------------------------------------------------
     def knows_group(self, subscriber: str, slug: str) -> bool:
         """True if this person has been polled for this group before."""
-        return bool(self._subs.get(subscriber, {}).get(slug))
+        with self._lock:
+            return bool(self._subs.get(subscriber, {}).get(slug))
 
     def has(self, subscriber: str, slug: str, post_id: str) -> bool:
-        return post_id in self._subs.get(subscriber, {}).get(slug, {})
+        with self._lock:
+            return post_id in self._subs.get(subscriber, {}).get(slug, {})
 
     def add(self, subscriber: str, slug: str, post_id: str, when: float | None = None) -> None:
-        posts = self._subs.setdefault(subscriber, {}).setdefault(slug, {})
-        posts[post_id] = when if when is not None else time.time()
-        self._dirty = True
+        with self._lock:
+            posts = self._subs.setdefault(subscriber, {}).setdefault(slug, {})
+            posts[post_id] = when if when is not None else time.time()
+            self._dirty = True
 
     def forget(self, subscriber: str, slug: str, post_id: str) -> None:
         """Un-see a post so the next cycle retries it after a failed delivery."""
-        posts = self._subs.get(subscriber, {}).get(slug, {})
-        if posts.pop(post_id, None) is not None:
-            self._dirty = True
+        with self._lock:
+            posts = self._subs.get(subscriber, {}).get(slug, {})
+            if posts.pop(post_id, None) is not None:
+                self._dirty = True
 
     def drop_subscriber(self, subscriber: str) -> None:
-        if self._subs.pop(subscriber, None) is not None:
-            self._dirty = True
+        with self._lock:
+            if self._subs.pop(subscriber, None) is not None:
+                self._dirty = True
 
     def count(self, subscriber: str | None = None) -> int:
-        if subscriber is not None:
-            return sum(len(v) for v in self._subs.get(subscriber, {}).values())
-        return sum(len(g) for s in self._subs.values() for g in s.values())
+        with self._lock:
+            if subscriber is not None:
+                return sum(len(v) for v in self._subs.get(subscriber, {}).values())
+            return sum(len(g) for s in self._subs.values() for g in s.values())
 
     # -- housekeeping ----------------------------------------------------
     def prune(self) -> int:
         """Drop entries older than the retention window and cap group size."""
         cutoff = time.time() - self.retention_days * 86400
         removed = 0
-        for groups in self._subs.values():
-            for slug, posts in list(groups.items()):
-                fresh = {pid: ts for pid, ts in posts.items() if ts >= cutoff}
-                if len(fresh) > MAX_IDS_PER_GROUP:
-                    newest = sorted(fresh.items(), key=lambda kv: kv[1], reverse=True)
-                    fresh = dict(newest[:MAX_IDS_PER_GROUP])
-                removed += len(posts) - len(fresh)
-                groups[slug] = fresh
-        if removed:
-            self._dirty = True
+        with self._lock:
+            for groups in self._subs.values():
+                for slug, posts in list(groups.items()):
+                    fresh = {pid: ts for pid, ts in posts.items() if ts >= cutoff}
+                    if len(fresh) > MAX_IDS_PER_GROUP:
+                        newest = sorted(fresh.items(), key=lambda kv: kv[1], reverse=True)
+                        fresh = dict(newest[:MAX_IDS_PER_GROUP])
+                    removed += len(posts) - len(fresh)
+                    groups[slug] = fresh
+            if removed:
+                self._dirty = True
         return removed
 
     def save(self, force: bool = False) -> None:
         """Atomic write, so a crash mid-save cannot corrupt the state file."""
-        if not (self._dirty or force):
-            return
+        with self._lock:
+            if not (self._dirty or force):
+                return
+            # Serialise inside the lock: a command removing a subscriber while
+            # this walked the structure would raise mid-write.
+            payload = json.dumps(
+                {
+                    "version": SCHEMA_VERSION,
+                    "updated": time.time(),
+                    "subscribers": self._subs,
+                },
+                indent=1,
+            )
+            self._dirty = False
+
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "version": SCHEMA_VERSION,
-            "updated": time.time(),
-            "subscribers": self._subs,
-        }
         tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-        tmp.write_text(json.dumps(payload, indent=1), encoding="utf-8")
+        tmp.write_text(payload, encoding="utf-8")
         os.replace(tmp, self.path)
-        self._dirty = False
 
 
 def _clean_groups(raw: dict) -> dict[str, dict[str, float]]:
