@@ -34,9 +34,13 @@ class StubScraper:
     def __init__(self, posts: list[Post]):
         self.posts = posts
         self.calls = 0
+        self.idle_calls = 0
 
-    def scrape_group(self, group, limit=None):
+    def scrape_group(self, group, limit=None, on_idle=None):
         self.calls += 1
+        if on_idle:
+            on_idle()  # the real scraper yields while waiting on the page
+            self.idle_calls += 1
         return list(self.posts)
 
 

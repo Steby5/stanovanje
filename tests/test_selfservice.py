@@ -306,11 +306,24 @@ class TestCommandsDuringACycle(SharedServerTestCase):
         self.session.inbox = [[message("!fbw pause", author_id="42", username="domin")]]
 
         class Scraper:
-            def scrape_group(self, group, limit=None):
+            def scrape_group(self, group, limit=None, on_idle=None):
                 return []
 
-        self.watcher.run_cycle(Scraper())
+        totals = self.watcher.run_cycle(Scraper())
+        self.assertEqual(totals["errors"], 0)
         self.assertTrue(self.watcher.paused)  # handled during the cycle
+
+    def test_a_command_is_answered_from_inside_a_scrape(self):
+        # The scraper yields via on_idle while waiting on the page; a command
+        # typed then must be handled without waiting for the group to finish.
+        self.cfg.control_poll_seconds = 0
+        self.watcher.control = self.control
+        self.session.inbox = [[message("!fbw pause", author_id="42", username="domin")]]
+
+        scraper = StubScraper([])
+        self.watcher.check_group(scraper, GROUP)
+        self.assertEqual(scraper.idle_calls, 1)
+        self.assertTrue(self.watcher.paused)
 
     def test_a_sleep_without_control_still_sleeps(self):
         self.watcher.control = None

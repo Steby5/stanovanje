@@ -34,7 +34,10 @@ class Config:
     discord_bot_token: str = ""
     discord_control_channel_id: str = ""
     command_prefix: str = "!fbw"
-    control_poll_seconds: int = 5
+    # How often to check Discord for commands.  This is also the rough delay
+    # before a command is answered, since the scraper yields at every point it
+    # is waiting on the page.  Discord allows far more than this.
+    control_poll_seconds: int = 2
     # Notify people in the channel they type commands in, unless they set a
     # channel of their own.  Means a new person needs only trigger words.
     notify_in_control_channel: bool = True
@@ -174,8 +177,8 @@ class Config:
             raise ValueError("restart_browser_every_cycles must be at least 1")
         if self.state_retention_days < 1:
             raise ValueError("state_retention_days must be at least 1")
-        if self.control_poll_seconds < 2:
-            raise ValueError("control_poll_seconds must be at least 2")
+        if self.control_poll_seconds < 1:
+            raise ValueError("control_poll_seconds must be at least 1")
         if not str(self.command_prefix).strip():
             raise ValueError("command_prefix cannot be empty")
         if not isinstance(self.control_allowed_user_ids, list):

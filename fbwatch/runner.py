@@ -38,6 +38,7 @@ class Watcher:
         self._consecutive_failures = 0
         self._alerted = False
         self._adopted_legacy = False
+        self._last_control_poll = 0.0
 
         # Live state, reported by the Discord `status` command.
         self.paused = False
@@ -84,7 +85,7 @@ class Watcher:
         all, instead of the same listing arriving once per person.  Posts are
         handled oldest-first so they arrive in the order they were posted.
         """
-        posts: list[Post] = scraper.scrape_group(group)
+        posts: list[Post] = scraper.scrape_group(group, on_idle=self._pump_control)
         totals = {"seen": len(posts), "new": 0, "matched": 0, "sent": 0}
 
         watchers = [s for s in self.subscribers if s.watches(group) and s.deliverable]
@@ -298,6 +299,25 @@ class Watcher:
             "python main.py users <name> --discord-id <your Discord user id>"
         )
 
+    def _pump_control(self) -> None:
+        """Answer Discord commands from inside a long scrape.
+
+        Called at the points where the scraper is waiting on the page.  Runs on
+        the same thread as everything else, so a command that reloads the
+        subscribers cannot race the matching loop - it lands before the posts
+        for this group are filtered.
+        """
+        if self.control is None or not self.control.enabled:
+            return
+        now = time.monotonic()
+        if now - self._last_control_poll < self.cfg.control_poll_seconds:
+            return
+        self._last_control_poll = now
+        try:
+            self.control.poll()
+        except Exception as exc:  # noqa: BLE001 - a bad command must not stop a scrape
+            log.exception("Discord control poll failed: %s", exc)
+
     def _sleep(self, seconds: float) -> dict:
         """Sleep, answering Discord commands while we wait.
 
@@ -315,6 +335,7 @@ class Watcher:
             if remaining <= 0:
                 return flags
             time.sleep(min(step, remaining))
+            self._last_control_poll = time.monotonic()
             flags.update(self.control.poll())
             if flags.get("force_check"):
                 return flags

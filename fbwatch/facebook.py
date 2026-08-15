@@ -225,32 +225,51 @@ class FacebookScraper:
         return len(usable)
 
     # -- scraping -------------------------------------------------------
-    def scrape_group(self, group: Group, limit: int | None = None) -> list[Post]:
-        """Load a group's newest-first feed and return the posts on it."""
+    def scrape_group(
+        self, group: Group, limit: int | None = None, on_idle=None
+    ) -> list[Post]:
+        """Load a group's newest-first feed and return the posts on it.
+
+        `on_idle` is called at each point where we are waiting on the page
+        rather than computing.  The watcher uses it to answer Discord commands
+        mid-scrape; without it a command typed during a pass over several
+        groups sits unanswered long enough to look like a dead bot.
+        """
         limit = limit or self.cfg.posts_per_group
         page = self.page
+        idle = on_idle or (lambda: None)
 
         try:
             page.goto(group.feed_url, wait_until="domcontentloaded")
         except PlaywrightTimeout as exc:
             raise ScrapeError(f"timed out loading {group.feed_url}") from exc
+        idle()
 
         blocked = page.evaluate(LOGIN_MARKERS_JS)
         if blocked:
             raise LoginRequired(f"{group.name}: {blocked}")
 
-        try:
-            page.wait_for_selector(POST_MARKER_SELECTOR, timeout=25000)
-        except PlaywrightTimeout:
-            # Either an empty group, a members-only wall, or a layout change.
-            if page.evaluate(LOGIN_MARKERS_JS):
-                raise LoginRequired(f"{group.name}: session expired") from None
-            raise ScrapeError(
-                f"{group.name}: no posts found - are you a member of this group?"
-            ) from None
+        # Waited in slices rather than one long block, so the pauses stay short
+        # enough to keep answering commands while a slow group loads.
+        deadline = time.monotonic() + 25
+        while True:
+            try:
+                page.wait_for_selector(POST_MARKER_SELECTOR, timeout=3000)
+                break
+            except PlaywrightTimeout:
+                idle()
+                if time.monotonic() >= deadline:
+                    # An empty group, a members-only wall, or a layout change.
+                    if page.evaluate(LOGIN_MARKERS_JS):
+                        raise LoginRequired(f"{group.name}: session expired") from None
+                    raise ScrapeError(
+                        f"{group.name}: no posts found - are you a member of this group?"
+                    ) from None
 
-        self._scroll_until(limit)
+        self._scroll_until(limit, on_idle=idle)
+        idle()
         self._expand_see_more()
+        idle()
 
         try:
             raw = page.evaluate(EXTRACT_POSTS_JS)
@@ -298,9 +317,10 @@ class FacebookScraper:
         except PlaywrightError:
             return 0
 
-    def _scroll_until(self, wanted: int, max_scrolls: int = 12) -> None:
+    def _scroll_until(self, wanted: int, max_scrolls: int = 12, on_idle=None) -> None:
         """Lazy-loaded feed: scroll until enough posts exist or it stops growing."""
         page = self.page
+        idle = on_idle or (lambda: None)
         stalled = 0
         for _ in range(max_scrolls):
             count = self._loaded_count()
@@ -308,6 +328,7 @@ class FacebookScraper:
                 return
             page.mouse.wheel(0, 2200)
             page.wait_for_timeout(random.randint(700, 1400))
+            idle()
             new_count = self._loaded_count()
             if new_count <= count:
                 stalled += 1

@@ -13,7 +13,7 @@
   "discord_bot_token": "",
   "discord_control_channel_id": "",
   "command_prefix": "!fbw",
-  "control_poll_seconds": 5,
+  "control_poll_seconds": 2,
   "control_allowed_user_ids": [],
 
   "_comment_telegram": "Optional: notifications-only delivery via Telegram. One bot serves everyone; each person's chat id goes in subscribers.json. Get a token from @BotFather.",
