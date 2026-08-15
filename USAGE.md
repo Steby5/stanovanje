@@ -7,18 +7,31 @@ Every command starts with `!fbw` and is typed in the control channel.
 
 ---
 
-## Before you start
+## Getting started
 
-You need two things, both from whoever runs the watcher:
+Just say what you're looking for:
 
-1. **Somewhere to be notified** — a Discord webhook pointing at a channel you can
-   see, or a Telegram chat. Until that's set you get nothing, however good your
-   trigger words are.
-2. **At least one trigger word.** A person with no trigger words receives
-   nothing — that's deliberate, so nobody gets buried under every post in every
-   group on day one.
+```
+!fbw add oddam + soba + ljubljana
+```
 
-Check both at once:
+That subscribes you on the spot — no one has to set you up first — and your
+listings will arrive in this same channel, `@`-mentioning you. Set the channel to
+**Notification Settings → Only @mentions** so you're only pinged for your own
+criteria, not everyone else's.
+
+Want them somewhere else instead?
+
+```
+!fbw channel 1234567890123456789    send my listings to that channel
+!fbw channel here                   back to this one
+!fbw mention off                    receive them without being pinged
+```
+
+You get nothing until you have **at least one trigger word** — that's deliberate,
+so nobody is buried under every post in every group on day one.
+
+Check where you stand:
 
 ```
 !fbw mine
@@ -99,6 +112,8 @@ matches everything else you asked for.
 
 | Command | What it does |
 |---|---|
+| `!fbw channel <id>` / `here` | Send your listings elsewhere, or back to this channel |
+| `!fbw mention off` / `on` | Receive listings without being pinged |
 | `!fbw status` | Is the watcher running, how many cycles, when it last checked |
 | `!fbw help` | The command list, tailored to what you're allowed to do |
 
@@ -195,7 +210,8 @@ Only for people marked as admin. Everyone else gets a polite refusal.
 | `!fbw users` | Everyone subscribed, and who's still not receiving anything |
 | `!fbw user add ana` | Add a person |
 | `!fbw user remove ana` | Remove them (their rules file stays on disk) |
-| `!fbw user set ana webhook <url>` | Where their notifications go |
+| `!fbw user set ana channel <id>` | Post their listings into that channel |
+| `!fbw user set ana webhook <url>` | Or send them through a webhook instead |
 | `!fbw user set ana telegram <chat id>` | Notify them on Telegram instead, or as well |
 | `!fbw user set ana discord <user id>` | Let them manage their own rules |
 | `!fbw user set ana admin true` | Make them an admin |

@@ -7,6 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from fbwatch.delivery import Dispatcher  # noqa: E402
 from fbwatch.models import Group, Post  # noqa: E402
 from fbwatch.notify import DiscordNotifier  # noqa: E402
 
@@ -60,28 +61,31 @@ class StubNotifier(DiscordNotifier):
         return True
 
 
-class StubDispatcher:
+class StubDispatcher(Dispatcher):
     """Captures delivery instead of doing any HTTP.
 
-    `inbox` is keyed by subscriber name so tests can assert who received what,
-    and `batches` records each grouped send as (webhook_url, [names]) so tests
-    can assert that people sharing a channel got a single message.
+    Subclasses the real Dispatcher so routing - which channel a person resolves
+    to, and who therefore shares a message - is the production logic rather than
+    a second implementation that can drift from it.
+
+    `inbox` is keyed by subscriber name so tests can assert who received what;
+    `batches` records each grouped send as (target key, [names]) so tests can
+    assert that people sharing a channel got a single message.
     """
 
     def __init__(self, cfg, subscribers, session=None, inbox=None, batches=None, fail=()):
-        self.cfg = cfg
-        self.subscribers = list(subscribers)
+        super().__init__(cfg, subscribers, session=session)
         self.inbox = inbox if inbox is not None else {}
         self.batches = batches if batches is not None else []
         self.fail = fail
-        for sub in self.subscribers:
+        for sub in self._subscribers:
             self.inbox.setdefault(sub.name, [])
 
     def deliver(self, post, matches):
         delivered = set()
         grouped: dict[str, list] = {}
         for sub, result in matches:
-            grouped.setdefault(sub.discord_webhook_url or f"~{sub.name}", []).append((sub, result))
+            grouped.setdefault(self.target_of(sub) or f"~{sub.name}", []).append((sub, result))
 
         for target, recipients in grouped.items():
             names = [s.name for s, _ in recipients]
@@ -89,19 +93,9 @@ class StubDispatcher:
                 continue  # whole batch fails, as a failed HTTP send would
             self.batches.append((target, names))
             for sub, result in recipients:
-                self.inbox[sub.name].append((post, result))
+                self.inbox.setdefault(sub.name, []).append((post, result))
                 delivered.add(sub.name)
         return delivered
-
-    def describe(self, sub):
-        return "stub"
-
-    def shared_with(self, sub):
-        same = sum(
-            1 for s in self.subscribers
-            if s.discord_webhook_url and s.discord_webhook_url == sub.discord_webhook_url
-        )
-        return max(0, same - 1)
 
 
 def stub_dispatcher(inbox: dict, fail=(), batches=None):

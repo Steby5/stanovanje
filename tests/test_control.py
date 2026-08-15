@@ -292,7 +292,16 @@ class TestPerUserRules(MultiUserTestCase):
         self.assertIn("garsonjera", reply)
         self.assertNotIn("oddam + soba", reply)
 
-    def test_unknown_discord_user_is_told_how_to_join(self):
+    def test_an_unknown_user_is_signed_up_on_their_first_command(self):
+        reply = self.run_command("add soba", author_id="999")
+        self.assertIn("Added", reply)
+        created = find_subscriber(self.watcher.subscribers, "domin-x999")
+        self.assertIsNone(created)  # name comes from the Discord username
+        names = [s.name for s in self.watcher.subscribers]
+        self.assertEqual(len(names), 3)
+
+    def test_self_signup_can_be_turned_off(self):
+        self.cfg.allow_self_signup = False
         self.assertIn("don't have a subscription", self.run_command("add soba", author_id="999"))
 
 
@@ -364,8 +373,9 @@ class TestAdminLockoutIsAvoided(ControlTestCase):
         self.run_command("user set domin discord 42")
         # Ana is linked and not an admin, so she loses admin rights.
         self.assertIn("admin-only", self.run_command("pause", author_id="77"))
-        # A stranger now has no subscription at all.
-        self.assertIn("don't have a subscription", self.run_command("add soba", author_id="999"))
+        # A stranger is signed up as themselves, not handed someone else's list.
+        self.run_command("add soba", author_id="999")
+        self.assertNotIn("soba", self.rules_of("domin"))
         # The owner still administers.
         self.run_command("pause", author_id="42")
         self.assertTrue(self.watcher.paused)
@@ -382,7 +392,9 @@ class TestUserManagement(MultiUserTestCase):
         self.run_command("user add bojan")
         bojan = find_subscriber(self.watcher.subscribers, "bojan")
         self.assertFalse(bojan.deliverable)
-        self.assertIn("no Discord channel", bojan.why_idle())
+        # The control channel is their destination by default, so all that is
+        # missing is what they want to hear about.
+        self.assertIn("no trigger words", bojan.why_idle())
 
     def test_set_webhook_then_rules_makes_them_live(self):
         self.run_command("user add bojan")
@@ -427,7 +439,7 @@ class TestUserManagement(MultiUserTestCase):
         self.run_command("user add bojan")
         reply = self.run_command("users")
         self.assertIn("bojan", reply)
-        self.assertIn("no Discord channel", reply)
+        self.assertIn("no trigger words", reply)
 
 
 class TestPolling(ControlTestCase):

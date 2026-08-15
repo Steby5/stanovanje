@@ -45,7 +45,7 @@ class Dispatcher:
                     )
                 else:
                     self._discord[key] = DiscordBotNotifier(
-                        cfg, sub.discord_channel_id, session=session
+                        cfg, sub.effective_channel_id, session=session
                     )
             if sub.discord_channel_id and not self._has_bot_token:
                 log.warning(
@@ -113,8 +113,8 @@ class Dispatcher:
         """
         if sub.discord_webhook_url:
             return f"webhook:{sub.discord_webhook_url}"
-        if sub.discord_channel_id and self._has_bot_token:
-            return f"channel:{sub.discord_channel_id}"
+        if sub.effective_channel_id and self._has_bot_token:
+            return f"channel:{sub.effective_channel_id}"
         return None
 
     # -- reporting --------------------------------------------------------
@@ -123,7 +123,8 @@ class Dispatcher:
         where = []
         key = self.target_of(sub)
         if key:
-            how = "Discord" if key.startswith("webhook:") else "Discord (bot)"
+            how = ("Discord" if key.startswith("webhook:")
+                   else "this channel" if sub.uses_default_channel else "Discord (bot)")
             shared = self.shared_with(sub)
             where.append(f"{how} — shared with {shared}" if shared else how)
         if sub.telegram_chat_id and self._has_telegram_token:

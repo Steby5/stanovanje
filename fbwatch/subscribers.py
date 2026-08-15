@@ -52,6 +52,9 @@ class Subscriber:
 
     # Filled in at load time, not persisted.
     matcher: KeywordMatcher | None = field(default=None, repr=False, compare=False)
+    # The control channel, so someone who never picks a destination is still
+    # notified where they type their commands.
+    fallback_channel_id: str = field(default="", repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not NAME_RE.match(self.name or ""):
@@ -87,9 +90,18 @@ class Subscriber:
         return group.slug.lower() in wanted or group.name.lower() in wanted
 
     @property
+    def effective_channel_id(self) -> str:
+        """Their own channel, else the control channel they type commands in."""
+        return self.discord_channel_id or self.fallback_channel_id
+
+    @property
+    def uses_default_channel(self) -> bool:
+        return not self.discord_channel_id and bool(self.fallback_channel_id)
+
+    @property
     def destinations(self) -> list[str]:
         out = []
-        if self.discord_webhook_url or self.discord_channel_id:
+        if self.discord_webhook_url or self.effective_channel_id:
             out.append("discord")
         if self.telegram_chat_id:
             out.append("telegram")
@@ -117,14 +129,14 @@ class Subscriber:
         if not self.enabled:
             return "disabled"
         if not self.has_destination:
-            return "no Discord channel, webhook or Telegram chat id set"
+            return "no notification channel set"
         if not self.has_triggers:
             return "no trigger words set"
         return ""
 
     # -- serialisation ---------------------------------------------------
     def to_dict(self) -> dict:
-        skip = {"name", "matcher"}
+        skip = {"name", "matcher", "fallback_channel_id"}
         out = {}
         for f in fields(self):
             if f.name in skip:
@@ -138,6 +150,15 @@ class Subscriber:
 
 
 # ---------------------------------------------------------------------------
+def control_channel_fallback(cfg) -> str:
+    """The channel commands are typed in, when it may double as a destination."""
+    if not getattr(cfg, "notify_in_control_channel", True):
+        return ""
+    if not (cfg.control_enabled and (cfg.discord_bot_token or "").strip()):
+        return ""
+    return str(cfg.discord_control_channel_id or "").strip()
+
+
 def _implicit_subscriber(cfg) -> Subscriber:
     """Single-user mode: one admin built from config.json + keywords.txt."""
     sub = Subscriber(
@@ -146,6 +167,7 @@ def _implicit_subscriber(cfg) -> Subscriber:
         keywords_file=cfg.keywords_file,
         discord_webhook_url=cfg.discord_webhook_url,
     )
+    sub.fallback_channel_id = control_channel_fallback(cfg)
     sub.load_matcher(cfg)
     return sub
 
@@ -166,7 +188,8 @@ def load_subscribers(cfg) -> list[Subscriber]:
     if not isinstance(data, dict):
         raise SubscriberError(f"{path} must be a JSON object of name -> settings")
 
-    known = {f.name for f in fields(Subscriber)} - {"name", "matcher"}
+    known = {f.name for f in fields(Subscriber)} - {"name", "matcher", "fallback_channel_id"}
+    fallback = control_channel_fallback(cfg)
     subscribers: list[Subscriber] = []
     for name, raw in data.items():
         if name.startswith("_"):
@@ -190,6 +213,7 @@ def load_subscribers(cfg) -> list[Subscriber]:
         if env_chat:
             sub.telegram_chat_id = env_chat
 
+        sub.fallback_channel_id = fallback
         sub.load_matcher(cfg)
         subscribers.append(sub)
 

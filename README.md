@@ -329,7 +329,44 @@ Each person gets:
 Without a `subscribers.json` the watcher runs single-user off `config.json` and
 `keywords.txt`, exactly as before.
 
-### Adding someone
+### The simplest setup: one channel, people add themselves
+
+Put the bot in a channel on your server, set that as
+`discord_control_channel_id`, and there's nothing else to do. Anyone who can post
+there types:
+
+```
+!fbw add oddam + soba + ljubljana
+```
+
+...and they're subscribed on the spot — no admin step. Their listings arrive in
+that same channel, `@`-mentioning them, so everyone sees the whole filtered feed
+and only gets pinged for their own criteria. Tell people to set the channel to
+**Notification Settings → Only @mentions**.
+
+Anyone who wants their listings somewhere else redirects themselves:
+
+```
+!fbw channel 1234567890123456789     ← their own channel
+!fbw channel here                    ← back to the shared one
+!fbw mention off                     ← receive posts without being pinged
+```
+
+Those three are self-service — no admin needed. Admin commands (`user ...`,
+`group ...`, `pause`) stay restricted.
+
+Two settings govern this, both on by default:
+
+| Setting | Effect |
+|---|---|
+| `notify_in_control_channel` | Notify people where they type commands, unless they set a channel |
+| `allow_self_signup` | Let people subscribe themselves instead of an admin adding them |
+
+Set `allow_self_signup` to `false` on a server where not everyone should be able
+to subscribe. The default channel is never written into `subscribers.json`, so
+moving `discord_control_channel_id` moves everyone who hasn't chosen their own.
+
+### Adding someone manually
 
 From the command line:
 

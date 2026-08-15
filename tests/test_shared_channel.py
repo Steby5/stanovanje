@@ -205,7 +205,7 @@ class TestSharedChannelThroughTheWatcher(unittest.TestCase):
     def test_a_post_matching_one_person_mentions_only_them(self):
         scraper = StubScraper([make_post("1", "Oddam sobo v Ljubljani", GROUP)])
         self.watcher.check_group(scraper, GROUP)
-        self.assertEqual(self.batches, [(SHARED, ["bo"])])
+        self.assertEqual(self.batches, [(f"webhook:{SHARED}", ["bo"])])
 
     def test_a_post_matching_nobody_is_not_posted_at_all(self):
         scraper = StubScraper([make_post("1", "Prodam rabljeno kolo", GROUP)])

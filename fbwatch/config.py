@@ -35,6 +35,12 @@ class Config:
     discord_control_channel_id: str = ""
     command_prefix: str = "!fbw"
     control_poll_seconds: int = 5
+    # Notify people in the channel they type commands in, unless they set a
+    # channel of their own.  Means a new person needs only trigger words.
+    notify_in_control_channel: bool = True
+    # Let people subscribe themselves by using a command, instead of an admin
+    # adding them first.  The control channel already limits who can do this.
+    allow_self_signup: bool = True
     # Empty means anyone who can post in the control channel may reconfigure
     # the watcher.  List Discord user ids to restrict it.
     control_allowed_user_ids: list = field(default_factory=list)

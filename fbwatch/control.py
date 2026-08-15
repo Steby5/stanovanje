@@ -19,6 +19,7 @@ survives a restart, and stays editable in a text editor too.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from pathlib import Path
 
@@ -49,6 +50,8 @@ HELP_EVERYONE = """**fbwatch — your trigger words**  (prefix `{p}`)
 `{p} exclude <term>` — never notify me on posts containing it
 `{p} mine` — show my rules and where my notifications go
 `{p} test <text>` — would this post notify me?
+`{p} channel <channel id>` — send my listings elsewhere (`{p} channel here` to undo)
+`{p} mention off` — receive listings without being pinged
 `{p} status` — what the watcher is doing
 
 Rule syntax: `word`, `a + b` (both), `"exact phrase"`, `=wholeword`, `re:<regex>`.
@@ -77,6 +80,12 @@ ADMIN_COMMANDS = {
     "users", "user", "for", "group", "groups", "pause", "mute", "resume",
     "unmute", "check", "interval", "list", "telegram",
 }
+
+
+def _safe_name(display_name: str) -> str:
+    """Turn a Discord username into something usable as a subscriber name."""
+    cleaned = re.sub(r"[^a-z0-9._-]+", "-", (display_name or "").lower()).strip("-._")
+    return cleaned[:32] if re.match(r"^[a-z0-9]", cleaned or "") else ""
 
 
 class DiscordControl:
@@ -217,7 +226,9 @@ class DiscordControl:
             command = content[len(self.prefix):].strip()
             log.info("Discord command from %s: %s", author.get("username", "?"), command)
             try:
-                reply, command_flags = self.handle(command, author_id)
+                reply, command_flags = self.handle(
+                    command, author_id, author.get("username", "")
+                )
             except Exception as exc:  # noqa: BLE001 - a bad command must not kill the loop
                 log.exception("command failed: %s", command)
                 reply, command_flags = f":x: That failed: `{exc}`", {}
@@ -258,7 +269,7 @@ class DiscordControl:
         return me, bool(me and me.admin)
 
     # -- commands ---------------------------------------------------------
-    def handle(self, command: str, author_id: str = "") -> tuple[str, dict]:
+    def handle(self, command: str, author_id: str = "", author_name: str = "") -> tuple[str, dict]:
         """Run one command.  Returns (reply text, control flags)."""
         me, is_admin = self._resolve(author_id)
 
@@ -299,6 +310,9 @@ class DiscordControl:
             "delete": self._cmd_remove,
             "exclude": self._cmd_exclude,
             "test": self._cmd_test,
+            "channel": self._cmd_channel,
+            "mention": self._cmd_mention,
+            "join": lambda r, t: (self._mine_text(t), {}),
             "users": lambda r, t: (self._users_text(), {}),
             "user": self._cmd_user,
             "telegram": self._cmd_telegram,
@@ -315,16 +329,53 @@ class DiscordControl:
         if handler is None:
             return f":grey_question: Unknown command `{verb}`. Try `{self.prefix} help`.", {}
 
-        # Everything below this point edits somebody's rules.
-        if verb in ("add", "remove", "rm", "delete", "exclude", "mine", "me", "whoami", "test"):
+        # Everything below this point acts on somebody's own subscription.
+        personal = (
+            "add", "remove", "rm", "delete", "exclude", "mine", "me", "whoami",
+            "test", "channel", "mention", "join",
+        )
+        if verb in personal and target is None:
+            target, problem = self._sign_up(author_id, author_name)
             if target is None:
+                return problem, {}
+            if verb == "join":
                 return (
-                    ":wave: You don't have a subscription yet. An admin can add you with "
-                    f"`{self.prefix} user add <name>` and link you with "
-                    f"`{self.prefix} user set <name> discord {author_id}`.",
+                    f":wave: Welcome, **{target.name}**. Tell me what to watch for with "
+                    f"`{self.prefix} add oddam + soba`, then check it with "
+                    f"`{self.prefix} mine`.",
                     {},
                 )
         return handler(rest, target)
+
+    def _sign_up(self, author_id: str, author_name: str) -> tuple[Subscriber | None, str]:
+        """Create a subscription for whoever just spoke, if that's allowed."""
+        if not self.cfg.allow_self_signup:
+            return None, (
+                ":wave: You don't have a subscription yet. An admin can add you with "
+                f"`{self.prefix} user add <name>` and link you with "
+                f"`{self.prefix} user set <name> discord {author_id}`."
+            )
+        if not author_id:
+            return None, ":x: I couldn't tell who you are, so I can't set you up."
+
+        name = _safe_name(author_name) or f"user{author_id[-6:]}"
+        if find_subscriber(self.watcher.subscribers, name):
+            name = f"{name}-{author_id[-4:]}"  # two people, same display name
+        try:
+            sub = Subscriber(name=name, discord_user_id=author_id)
+        except SubscriberError as exc:
+            return None, f":x: {exc}"
+
+        save_subscribers(self.cfg, list(self.watcher.subscribers) + [sub])
+        ensure_keywords_file(self.cfg, sub)
+        try:
+            self.watcher.reload_inputs()
+        except (ValueError, KeywordSyntaxError, SubscriberError, FileNotFoundError) as exc:
+            return None, f":warning: Could not set you up: {exc}"
+
+        created = find_subscriber(self.watcher.subscribers, name)
+        log.info("self-signup: created subscriber '%s' for Discord user %s", name, author_id)
+        return created, ""
 
     def _help(self, is_admin: bool) -> str:
         text = HELP_EVERYONE.format(p=self.prefix)
@@ -456,6 +507,63 @@ class DiscordControl:
         )
         reason = result.reason if matcher.includes else "no trigger words set"
         return f"{verdict}\nReason: `{reason}`", {}
+
+    def _cmd_channel(self, rest: str, sub: Subscriber) -> tuple[str, dict]:
+        """Redirect my own listings to another channel."""
+        value = rest.strip()
+
+        if not value:
+            where = self.watcher.dispatcher.describe(sub) if self.watcher.dispatcher else "?"
+            return (
+                f"**{sub.name}** → {where}\n"
+                f"Send them elsewhere with `{self.prefix} channel <channel id>`, or "
+                f"`{self.prefix} channel here` to use this one.",
+                {},
+            )
+
+        if value.lower() in ("here", "default", "reset", "none"):
+            sub.discord_channel_id = ""
+            save_subscribers(self.cfg, self.watcher.subscribers)
+            return self._reload(
+                f":white_check_mark: **{sub.name}**'s listings will arrive in this channel."
+            )
+
+        if not value.isdigit():
+            return (
+                ":x: A channel id is a number — turn on **Settings → Advanced → "
+                "Developer Mode**, then right-click the channel → **Copy Channel ID**.",
+                {},
+            )
+        if not (self.cfg.discord_bot_token or "").strip():
+            return ":x: Posting into a channel needs `discord_bot_token` in config.json.", {}
+        if sub.discord_webhook_url:
+            return (
+                f":warning: **{sub.name}** has a webhook, which takes precedence. An admin "
+                f"can clear it with `{self.prefix} user set {sub.name} webhook`.",
+                {},
+            )
+
+        sub.discord_channel_id = value
+        save_subscribers(self.cfg, self.watcher.subscribers)
+        return self._reload(
+            f":white_check_mark: **{sub.name}**'s listings will go to <#{value}>.\n"
+            "*(The bot needs View Channel, Send Messages and Embed Links there.)*"
+        )
+
+    def _cmd_mention(self, rest: str, sub: Subscriber) -> tuple[str, dict]:
+        """Be pinged on my listings, or not."""
+        value = rest.strip().lower()
+        if value in ("on", "yes", "true", "1"):
+            sub.mention = True
+        elif value in ("off", "no", "false", "0"):
+            sub.mention = False
+        else:
+            state = "on" if sub.mention else "off"
+            return f":grey_question: Mentions are **{state}**. Use `{self.prefix} mention off`.", {}
+
+        save_subscribers(self.cfg, self.watcher.subscribers)
+        word = "will @-mention you" if sub.mention else "won't ping you"
+        return self._reload(f":white_check_mark: Listings for **{sub.name}** {word}.")
 
     # -- people -----------------------------------------------------------
     def _cmd_user(self, rest: str, _sub) -> tuple[str, dict]:

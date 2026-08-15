@@ -198,7 +198,7 @@ class TestIdleSubscribers(MultiUserBase):
     def test_each_idle_reason_is_explained(self):
         reasons = {s.name: s.why_idle() for s in self.watcher.subscribers}
         self.assertEqual(reasons["domin"], "")
-        self.assertIn("no Discord channel", reasons["nodest"])
+        self.assertIn("no notification channel", reasons["nodest"])
         self.assertIn("no trigger words", reasons["norules"])
         self.assertEqual(reasons["off"], "disabled")
 
