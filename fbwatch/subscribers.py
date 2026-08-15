@@ -39,6 +39,9 @@ class Subscriber:
     admin: bool = False
     keywords_file: str = ""
     discord_webhook_url: str = ""
+    # Alternative to a webhook: post as the bot into this channel.  Needs the
+    # bot in that server with View Channel / Send Messages / Embed Links.
+    discord_channel_id: str = ""
     telegram_chat_id: str = ""
     discord_user_id: str = ""
     # @-mention this person on their posts.  Needed when several people share a
@@ -59,6 +62,7 @@ class Subscriber:
         self.telegram_chat_id = str(self.telegram_chat_id or "").strip()
         self.discord_user_id = str(self.discord_user_id or "").strip()
         self.discord_webhook_url = (self.discord_webhook_url or "").strip()
+        self.discord_channel_id = str(self.discord_channel_id or "").strip()
 
     # -- files ----------------------------------------------------------
     def keywords_path(self, cfg) -> Path:
@@ -85,7 +89,7 @@ class Subscriber:
     @property
     def destinations(self) -> list[str]:
         out = []
-        if self.discord_webhook_url:
+        if self.discord_webhook_url or self.discord_channel_id:
             out.append("discord")
         if self.telegram_chat_id:
             out.append("telegram")
@@ -113,7 +117,7 @@ class Subscriber:
         if not self.enabled:
             return "disabled"
         if not self.has_destination:
-            return "no Discord webhook or Telegram chat id set"
+            return "no Discord channel, webhook or Telegram chat id set"
         if not self.has_triggers:
             return "no trigger words set"
         return ""

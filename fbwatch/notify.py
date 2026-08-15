@@ -13,6 +13,8 @@ from .textutil import truncate
 
 log = logging.getLogger(__name__)
 
+API_ROOT = "https://discord.com/api/v10"
+
 # Discord's documented limits, with a little headroom.
 MAX_DESCRIPTION = 4000
 MAX_TITLE = 250
@@ -154,16 +156,30 @@ class DiscordNotifier:
             return False
         return self._post({"content": truncate(message, 1900)})
 
-    def _post(self, payload: dict, attempts: int = 4) -> bool:
+    # -- transport (overridden to post as the bot instead) ---------------
+    @property
+    def _endpoint(self) -> str:
+        return self.webhook_url
+
+    def _headers(self) -> dict:
+        return {}
+
+    def _decorate(self, payload: dict) -> None:
+        """Webhooks can set a per-message name and avatar; bots cannot."""
         payload.setdefault("username", self.username)
         if self.avatar_url:
             payload.setdefault("avatar_url", self.avatar_url)
+
+    def _post(self, payload: dict, attempts: int = 4) -> bool:
+        self._decorate(payload)
         payload.setdefault("allowed_mentions", {"parse": []})
 
         for attempt in range(1, attempts + 1):
             self._throttle()
             try:
-                resp = self.session.post(self.webhook_url, json=payload, timeout=20)
+                resp = self.session.post(
+                    self._endpoint, json=payload, headers=self._headers(), timeout=20
+                )
             except requests.RequestException as exc:
                 log.warning("Discord request failed (attempt %d/%d): %s", attempt, attempts, exc)
                 time.sleep(min(2**attempt, 30))
@@ -202,3 +218,39 @@ class DiscordNotifier:
         if elapsed < MIN_SECONDS_BETWEEN_SENDS:
             time.sleep(MIN_SECONDS_BETWEEN_SENDS - elapsed)
         self._last_send = time.monotonic()
+
+
+class DiscordBotNotifier(DiscordNotifier):
+    """Posts to a channel as the bot, instead of through a webhook.
+
+    Useful once the bot is already in the server for commands: a channel id is
+    not a secret, so nothing sensitive has to sit in subscribers.json, and there
+    is no webhook to create per person.  The bot needs View Channel, Send
+    Messages and Embed Links in that channel - the last one is easy to miss,
+    because webhooks never needed it.
+    """
+
+    def __init__(self, cfg, channel_id: str, session: requests.Session | None = None):
+        super().__init__(cfg, webhook_url="", session=session)
+        self.channel_id = str(channel_id or "").strip()
+        self.token = (cfg.discord_bot_token or "").strip()
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.token and self.channel_id)
+
+    @property
+    def _endpoint(self) -> str:
+        return f"{API_ROOT}/channels/{self.channel_id}/messages"
+
+    def _headers(self) -> dict:
+        return {
+            "Authorization": f"Bot {self.token}",
+            "User-Agent": "fbwatch (https://localhost, 1.0)",
+        }
+
+    def _decorate(self, payload: dict) -> None:
+        # A bot posts under its own name; username/avatar are webhook-only and
+        # Discord rejects them here.
+        payload.pop("username", None)
+        payload.pop("avatar_url", None)

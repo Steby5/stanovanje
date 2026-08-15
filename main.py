@@ -422,6 +422,8 @@ def cmd_users(cfg: Config, args) -> int:
 
     if args.webhook is not None:
         sub.discord_webhook_url = args.webhook
+    if args.channel is not None:
+        sub.discord_channel_id = args.channel
     if args.telegram is not None:
         sub.telegram_chat_id = args.telegram
     if args.discord_id is not None:
@@ -529,6 +531,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("users", help="add or edit a subscriber")
     p.add_argument("name", nargs="?", help="subscriber name (omit to list everyone)")
     p.add_argument("--webhook", help="their Discord webhook URL")
+    p.add_argument("--channel", help="Discord channel id to post into via the bot")
     p.add_argument("--telegram", help="their Telegram chat id")
     p.add_argument("--discord-id", help="their Discord user id, so they can manage their own rules")
     p.add_argument("--admin", action="store_true", help="let them manage people and groups")

@@ -382,7 +382,7 @@ class TestUserManagement(MultiUserTestCase):
         self.run_command("user add bojan")
         bojan = find_subscriber(self.watcher.subscribers, "bojan")
         self.assertFalse(bojan.deliverable)
-        self.assertIn("no Discord webhook", bojan.why_idle())
+        self.assertIn("no Discord channel", bojan.why_idle())
 
     def test_set_webhook_then_rules_makes_them_live(self):
         self.run_command("user add bojan")
@@ -427,7 +427,7 @@ class TestUserManagement(MultiUserTestCase):
         self.run_command("user add bojan")
         reply = self.run_command("users")
         self.assertIn("bojan", reply)
-        self.assertIn("no Discord webhook", reply)
+        self.assertIn("no Discord channel", reply)
 
 
 class TestPolling(ControlTestCase):

@@ -59,7 +59,8 @@ HELP_ADMIN = """
 `{p} users` — everyone subscribed
 `{p} user add <name>` — add a person
 `{p} user remove <name>`
-`{p} user set <name> webhook <url>` — their Discord webhook
+`{p} user set <name> channel <channel id>` — post there as the bot
+`{p} user set <name> webhook <url>` — or use a webhook instead
 `{p} user set <name> telegram <chat id>` — their Telegram chat
 `{p} user set <name> discord <user id>` — let them manage their own rules
 `{p} user enable <name>` / `{p} user disable <name>`
@@ -529,6 +530,23 @@ class DiscordControl:
                 return ":x: That doesn't look like a Discord webhook URL.", {}
             sub.discord_webhook_url = value
             told = f"webhook {'set' if value else 'cleared'}"
+        elif field in ("channel", "discord_channel", "discord_channel_id"):
+            if value and not value.isdigit():
+                return (
+                    ":x: A channel id is a number — turn on Developer Mode, then "
+                    "right-click the channel → Copy Channel ID.",
+                    {},
+                )
+            if value and not (self.cfg.discord_bot_token or "").strip():
+                return ":x: Posting into a channel needs `discord_bot_token` in config.json.", {}
+            sub.discord_channel_id = value
+            if value and sub.discord_webhook_url:
+                told = (
+                    f"channel set, but their webhook still wins — clear it with "
+                    f"`{self.prefix} user set {sub.name} webhook`"
+                )
+            else:
+                told = f"channel {'set' if value else 'cleared'}"
         elif field in ("telegram", "chat", "telegram_chat_id"):
             if value and not value.lstrip("-").isdigit():
                 return ":x: A Telegram chat id is a number, e.g. `123456789`.", {}

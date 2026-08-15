@@ -39,8 +39,8 @@ class FakeSession:
         self.status = status
         self.payload = payload if payload is not None else {"ok": True}
 
-    def post(self, url, json=None, timeout=None):
-        self.posts.append({"url": url, "body": json})
+    def post(self, url, json=None, **kwargs):
+        self.posts.append({"url": url, "body": json, "headers": kwargs.get("headers") or {}})
         return FakeResponse(self.payload, self.status)
 
     def get(self, url, timeout=None):

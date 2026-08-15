@@ -201,8 +201,9 @@ messages, never read them.
 3. On the same page, scroll to **Privileged Gateway Intents** and turn on
    **MESSAGE CONTENT INTENT**. Without it the bot can't read your commands.
 4. **OAuth2 → URL Generator**: tick **bot**, then under permissions tick
-   **View Channels**, **Send Messages**, **Read Message History**. Open the URL it
-   generates at the bottom and add the bot to your server.
+   **View Channels**, **Send Messages**, **Read Message History** and
+   **Embed Links**. Open the URL it generates at the bottom and add the bot to
+   your server. (Or skip the checkboxes: append `&permissions=84992` to the URL.)
 5. Get the channel id: in Discord, **Settings → Advanced → Developer Mode** on,
    then right-click your channel → **Copy Channel ID**.
 
@@ -362,14 +363,40 @@ Then Ana types `!fbw add garsonjera`, `!fbw mine`, `!fbw test <text>` and only
 her rules change. Admin commands (`user ...`, `group ...`, `pause`, `interval`)
 stay restricted to people with `"admin": true`.
 
+### Webhook or bot?
+
+Two ways to reach a Discord channel. **If you've already set the bot up for
+commands, you don't need webhooks at all** — give people a channel id instead:
+
+```json
+"ana": { "discord_channel_id": "1234567890123456789", "discord_user_id": "222..." }
+```
+
+|  | Webhook | Bot (`discord_channel_id`) |
+|---|---|---|
+| Needs a bot | no — works standalone | yes, and it must be in that channel |
+| Config holds | a secret URL per person | just a channel id (not a secret) |
+| Setup per person | create a webhook | copy the channel id |
+| Extra permission | — | **Embed Links**, on top of View Channel + Send Messages |
+
+Channel ids aren't secrets, so `subscribers.json` stops holding credentials
+entirely — worth having if you ever want to share your config.
+
+> **Embed Links is the one people miss.** Webhooks never needed it, so a bot
+> that posts command replies fine will silently fail to post listings without
+> it. Re-invite with permissions integer **84992** (View Channel + Send
+> Messages + Read Message History + Embed Links).
+
+Set both and the webhook wins, since it works even if the bot is offline.
+
 ### One shared channel, or a channel each
 
-That's decided by the webhooks, with no separate setting:
+That's decided by the destination, with no separate setting:
 
-- **Different webhooks** → each person gets their own channel and sees only
-  their own matches.
-- **The same webhook** → they share a channel. Each matched post is posted there
-  **once** and `@`-mentions whoever it matched, rather than arriving twice.
+- **Different channels** → each person sees only their own matches.
+- **The same channel id (or the same webhook)** → they share it. Each matched
+  post is posted there **once** and `@`-mentions whoever it matched, rather than
+  arriving twice.
 
 The shared setup is usually what you want with friends: everyone sees the whole
 filtered feed, but your phone only buzzes for your own criteria. Have each person

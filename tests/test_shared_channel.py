@@ -44,8 +44,8 @@ class RecordingSession:
     def __init__(self):
         self.posts: list[dict] = []
 
-    def post(self, url, json=None, timeout=None):
-        self.posts.append({"url": url, "body": json})
+    def post(self, url, json=None, **kwargs):
+        self.posts.append({"url": url, "body": json, "headers": kwargs.get("headers") or {}})
         return FakeResponse()
 
 
@@ -232,6 +232,99 @@ class TestSharedChannelThroughTheWatcher(unittest.TestCase):
         self.watcher.reload_inputs()
         self.watcher.check_group(scraper, GROUP)
         self.assertEqual(sorted(self.batches[0][1]), ["ana", "bo"])
+
+
+class TestBotDelivery(unittest.TestCase):
+    """Posting as the bot, instead of creating a webhook per channel."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.cfg = Config()
+        self.cfg.base_dir = Path(self.tmp.name)
+        self.cfg.discord_bot_token = "bot-token"
+        self.session = RecordingSession()
+        self.post = make_post("42", "Oddam sobo v Ljubljani", GROUP)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def dispatch(self, subs):
+        return Dispatcher(self.cfg, subs, session=self.session)
+
+    def test_a_channel_id_needs_no_webhook(self):
+        ana = Subscriber(name="ana", discord_channel_id="555", discord_user_id="111")
+        self.assertTrue(ana.has_destination)
+        delivered = self.dispatch([ana]).deliver(self.post, [(ana, match("soba"))])
+
+        self.assertEqual(delivered, {"ana"})
+        sent = self.session.posts[0]
+        self.assertTrue(sent["url"].endswith("/channels/555/messages"))
+        self.assertEqual(sent["headers"]["Authorization"], "Bot bot-token")
+
+    def test_the_bot_posts_under_its_own_name(self):
+        # username/avatar are webhook-only fields; Discord rejects them here.
+        ana = Subscriber(name="ana", discord_channel_id="555")
+        self.dispatch([ana]).deliver(self.post, [(ana, match("soba"))])
+        body = self.session.posts[0]["body"]
+        self.assertNotIn("username", body)
+        self.assertNotIn("avatar_url", body)
+
+    def test_the_embed_and_mentions_are_the_same_as_a_webhook(self):
+        ana = Subscriber(name="ana", discord_channel_id="555", discord_user_id="111")
+        bo = Subscriber(name="bo", discord_channel_id="555", discord_user_id="222")
+        self.dispatch([ana, bo]).deliver(
+            self.post, [(ana, match("soba")), (bo, match("oddam"))]
+        )
+        body = self.session.posts[0]["body"]
+        self.assertIn("<@111>", body["content"])
+        self.assertIn("<@222>", body["content"])
+        self.assertEqual(body["allowed_mentions"], {"parse": [], "users": ["111", "222"]})
+
+    def test_people_in_the_same_channel_share_one_message(self):
+        ana = Subscriber(name="ana", discord_channel_id="555")
+        bo = Subscriber(name="bo", discord_channel_id="555")
+        self.dispatch([ana, bo]).deliver(
+            self.post, [(ana, match("soba")), (bo, match("oddam"))]
+        )
+        self.assertEqual(len(self.session.posts), 1)
+
+    def test_different_channels_stay_separate(self):
+        ana = Subscriber(name="ana", discord_channel_id="555")
+        bo = Subscriber(name="bo", discord_channel_id="666")
+        self.dispatch([ana, bo]).deliver(
+            self.post, [(ana, match("soba")), (bo, match("oddam"))]
+        )
+        self.assertEqual(len(self.session.posts), 2)
+
+    def test_a_webhook_and_a_channel_are_not_merged(self):
+        # Same physical channel, but we cannot know that - two sends is correct.
+        ana = Subscriber(name="ana", discord_webhook_url=SHARED)
+        bo = Subscriber(name="bo", discord_channel_id="555")
+        self.dispatch([ana, bo]).deliver(
+            self.post, [(ana, match("soba")), (bo, match("oddam"))]
+        )
+        self.assertEqual(len(self.session.posts), 2)
+
+    def test_a_webhook_wins_when_both_are_set(self):
+        # The webhook works without the bot being present, so prefer it.
+        ana = Subscriber(name="ana", discord_webhook_url=SHARED, discord_channel_id="555")
+        dispatcher = self.dispatch([ana])
+        self.assertEqual(dispatcher.target_of(ana), f"webhook:{SHARED}")
+        dispatcher.deliver(self.post, [(ana, match("soba"))])
+        self.assertEqual(self.session.posts[0]["url"], SHARED)
+
+    def test_a_channel_id_without_a_bot_token_is_no_destination(self):
+        cfg = Config()
+        cfg.base_dir = Path(self.tmp.name)
+        ana = Subscriber(name="ana", discord_channel_id="555")
+        dispatcher = Dispatcher(cfg, [ana], session=self.session)
+        self.assertIsNone(dispatcher.target_of(ana))
+        self.assertEqual(dispatcher.describe(ana), "nowhere")
+        self.assertEqual(dispatcher.deliver(self.post, [(ana, match("soba"))]), set())
+
+    def test_describe_says_which_transport(self):
+        ana = Subscriber(name="ana", discord_channel_id="555")
+        self.assertEqual(self.dispatch([ana]).describe(ana), "Discord (bot)")
 
 
 if __name__ == "__main__":
