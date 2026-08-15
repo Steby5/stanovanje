@@ -1,4 +1,4 @@
-# Secrets and session data - never commit these.
+# --- secrets and session data - never commit these ---------------------
 config.json
 subscribers.json
 subscribers.json.*
@@ -8,8 +8,23 @@ state.json.*
 fbwatch.log
 debug/
 
+# --- personal configuration --------------------------------------------
+# Copy the .example files to these names and edit; your own groups and
+# trigger words then stay on your machine instead of in the repo.
+groups.txt
+keywords.txt
+keywords/
+
+# --- local tooling ------------------------------------------------------
+.claude/settings.local.json
+.vscode/
+.idea/
+
+# --- python -------------------------------------------------------------
 __pycache__/
 *.py[cod]
+*.egg-info/
 .venv/
 venv/
+env/
 .pytest_cache/

@@ -1,12 +1,28 @@
 # fbwatch
 
-Watches Facebook groups for new posts and sends the interesting ones to Discord —
-with the post text embedded and a direct link to the post.
+[![tests](https://github.com/Steby5/stanovanje/actions/workflows/tests.yml/badge.svg)](https://github.com/Steby5/stanovanje/actions/workflows/tests.yml)
+
+Watches Facebook groups for new posts and sends the interesting ones to Discord
+or Telegram — with the post text embedded and a direct link to the post.
+
+Built for apartment hunting, where the good listings are gone in an hour and the
+groups are 90% noise.
 
 - **Groups** to watch live in `groups.txt`, one per line.
-- **Trigger words** live in `keywords.txt`. Only posts matching them are sent,
-  so you don't get pinged for every post in the group.
+- **Trigger words** live in `keywords.txt`. Only posts matching them are sent, so
+  you don't get pinged for every post in the group.
+- Matching handles **Slovenian inflection** — `ljubljana` matches "v Ljubljani",
+  `soba` matches "sobo"/"sobi"/"sobe".
 - Each post is notified **once**; state survives restarts.
+- **Several people** can share one watcher, each with their own trigger words and
+  their own destination. Facebook is still scraped once per cycle.
+- Configurable **from Discord** — add trigger words from your phone.
+
+> **Personal-use tool.** It drives a real logged-in browser at a deliberately
+> gentle pace to read groups you are already a member of. Automated access is
+> against Facebook's terms of service; you use it on your own account at your own
+> risk. Don't point it at groups you haven't joined, and don't crank the poll
+> interval down.
 
 ---
 
@@ -15,8 +31,20 @@ with the post text embedded and a direct link to the post.
 ### 1. Install
 
 ```powershell
+git clone https://github.com/Steby5/stanovanje.git
+cd stanovanje
+
 pip install -r requirements.txt
 python -m playwright install chromium
+```
+
+Then create your own config from the examples — these are gitignored, so your
+groups, trigger words and webhook stay on your machine:
+
+```powershell
+copy config.example.json config.json
+copy groups.example.txt groups.txt
+copy keywords.example.txt keywords.txt
 ```
 
 ### 2. Create a Discord webhook
@@ -25,10 +53,9 @@ In Discord: **Server Settings → Integrations → Webhooks → New Webhook**, p
 channel, then **Copy Webhook URL**. (On a channel you own: right-click the channel
 → Edit Channel → Integrations → Webhooks.)
 
-Copy the example config and paste the URL in:
+Paste the URL into the `config.json` you created above:
 
 ```powershell
-copy config.example.json config.json
 notepad config.json
 ```
 
@@ -365,8 +392,10 @@ To have it start with Windows, create a scheduled task:
 
 ```powershell
 schtasks /create /tn "fbwatch" /sc onlogon /rl highest ^
-  /tr "pythonw C:\Users\domin\Desktop\stanovanje\main.py run"
+  /tr "pythonw %CD%\main.py run"
 ```
+
+(run that from the project folder, or write the full path to `main.py` yourself)
 
 `pythonw` runs it without a console window. Check `fbwatch.log` for what it's
 doing, and `schtasks /end /tn fbwatch` to stop it.

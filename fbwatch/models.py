@@ -111,7 +111,10 @@ def parse_group_line(line: str) -> Group | None:
 def load_groups(path: Path) -> list[Group]:
     """Read groups.txt.  Later duplicates of the same group are dropped."""
     if not path.exists():
-        raise FileNotFoundError(f"groups file not found: {path}")
+        raise FileNotFoundError(
+            f"groups file not found: {path}\n"
+            f"Copy the example to get started:  copy {path.stem}.example{path.suffix} {path.name}"
+        )
 
     groups: list[Group] = []
     seen: set[str] = set()
