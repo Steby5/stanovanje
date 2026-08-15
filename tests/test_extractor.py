@@ -52,8 +52,14 @@ class TestExtractor(unittest.TestCase):
             cls._pw.stop()
 
     # -- structure -------------------------------------------------------
-    def test_finds_three_posts_and_skips_the_empty_article(self):
-        self.assertEqual(len(self.posts), 3)
+    def test_finds_every_post_in_both_markups(self):
+        # three in the old role="article" form, two in the current feed form
+        self.assertEqual(len(self.posts), 5)
+
+    def test_skips_the_empty_article_and_the_placeholders(self):
+        # virtualised aria-posinset items with nothing rendered in them
+        for post in self.posts:
+            self.assertTrue(post["text"] or post["permalink"])
 
     def test_comment_is_not_reported_as_a_post(self):
         for post in self.posts:
@@ -97,10 +103,51 @@ class TestExtractor(unittest.TestCase):
     def test_skips_small_avatars(self):
         self.assertEqual(self.posts[2]["images"], [])
 
+    # -- the current Facebook markup --------------------------------------
+    def test_a_feed_item_is_read_as_a_post(self):
+        post = self.posts[3]
+        self.assertEqual(post["author"], "Boris Banjanin")
+        self.assertIn("enoposteljno sobo", post["text"])
+
+    def test_the_byline_identifies_a_post_without_a_message_container(self):
+        self.assertEqual(self.posts[4]["author"], "Anonymous participant")
+        self.assertIn("garsonjero", self.posts[4]["text"])
+
+    def test_an_inline_comment_does_not_leak_into_the_post(self):
+        post = self.posts[3]
+        self.assertNotIn("041703375", post["text"])
+        self.assertNotIn(
+            "https://scontent.xx.fbcdn.net/v/p60x60/commenter.jpg", post["images"]
+        )
+
+    def test_the_timestamp_comes_from_the_aria_label(self):
+        self.assertIn("August 11, 2026", self.posts[3]["timestamp"])
+
+    def test_a_comment_link_yields_the_parent_post_permalink(self):
+        # The post's own anchor has no path, but an inline comment's does; the
+        # comment_id is stripped so it points at the post rather than the reply.
+        permalink = self.posts[3]["permalink"]
+        self.assertIn("/posts/10163383368366317", permalink)
+        self.assertNotIn("comment_id", permalink)
+
+    def test_posts_come_back_in_feed_order(self):
+        # The watcher reverses this list to notify oldest-first, so document
+        # order has to survive being collected by several selectors.
+        self.assertIn("Ana Novak", self.posts[0]["author"])
+        self.assertEqual(self.posts[4]["author"], "Anonymous participant")
+
     # -- ids -------------------------------------------------------------
     def test_post_ids_come_out_of_the_permalinks(self):
-        ids = [make_post_id(p["permalink"], p["author"], p["text"]) for p in self.posts]
+        ids = [make_post_id(p["permalink"], p["author"], p["text"]) for p in self.posts[:3]]
         self.assertEqual(ids, ["111222333", "444555666", "777888999"])
+
+    def test_a_post_without_a_permalink_still_gets_a_stable_id(self):
+        post = self.posts[4]
+        self.assertEqual(post["permalink"], "")
+        first = make_post_id(post["permalink"], post["author"], post["text"])
+        again = make_post_id(post["permalink"], post["author"], post["text"])
+        self.assertTrue(first.startswith("fp_"))
+        self.assertEqual(first, again)
 
 
 if __name__ == "__main__":

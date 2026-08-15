@@ -16,7 +16,12 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeout
 from playwright.sync_api import sync_playwright
 
-from .extract_js import EXTRACT_POSTS_JS, LOGIN_MARKERS_JS, SEE_MORE_LABELS
+from .extract_js import (
+    EXTRACT_POSTS_JS,
+    LOGIN_MARKERS_JS,
+    POST_MARKER_SELECTOR,
+    SEE_MORE_LABELS,
+)
 from .models import Group, Post, make_post_id
 
 log = logging.getLogger(__name__)
@@ -235,7 +240,7 @@ class FacebookScraper:
             raise LoginRequired(f"{group.name}: {blocked}")
 
         try:
-            page.wait_for_selector('div[role="article"]', timeout=25000)
+            page.wait_for_selector(POST_MARKER_SELECTOR, timeout=25000)
         except PlaywrightTimeout:
             # Either an empty group, a members-only wall, or a layout change.
             if page.evaluate(LOGIN_MARKERS_JS):
@@ -281,21 +286,29 @@ class FacebookScraper:
         log.debug("%s: extracted %d post(s)", group.name, len(posts))
         return posts
 
+    def _loaded_count(self) -> int:
+        """How many posts have actually rendered.
+
+        Counts extracted posts rather than DOM nodes: the feed is virtualised,
+        so most `aria-posinset` items are empty placeholders and counting those
+        would stop the scroll long before any real posts had loaded.
+        """
+        try:
+            return len(self.page.evaluate(EXTRACT_POSTS_JS))
+        except PlaywrightError:
+            return 0
+
     def _scroll_until(self, wanted: int, max_scrolls: int = 12) -> None:
         """Lazy-loaded feed: scroll until enough posts exist or it stops growing."""
         page = self.page
         stalled = 0
         for _ in range(max_scrolls):
-            count = page.evaluate(
-                '() => document.querySelectorAll(\'div[role="article"]\').length'
-            )
+            count = self._loaded_count()
             if count >= wanted:
                 return
             page.mouse.wheel(0, 2200)
             page.wait_for_timeout(random.randint(700, 1400))
-            new_count = page.evaluate(
-                '() => document.querySelectorAll(\'div[role="article"]\').length'
-            )
+            new_count = self._loaded_count()
             if new_count <= count:
                 stalled += 1
                 if stalled >= 2:
@@ -308,7 +321,9 @@ class FacebookScraper:
         page = self.page
         clicks = 0
         try:
-            buttons = page.query_selector_all('div[role="article"] div[role="button"]')
+            buttons = page.query_selector_all(
+                'div[role="feed"] div[role="button"], div[role="article"] div[role="button"]'
+            )
         except PlaywrightError:
             return
 
@@ -364,8 +379,8 @@ class FacebookScraper:
             log.debug("Screenshot failed: %s", exc)
         return {
             "url": page.url,
-            "articles": page.evaluate(
-                '() => document.querySelectorAll(\'div[role="article"]\').length'
+            "feed_items": page.evaluate(
+                f"() => document.querySelectorAll({POST_MARKER_SELECTOR!r}).length"
             ),
             "login_marker": page.evaluate(LOGIN_MARKERS_JS),
             "posts": page.evaluate(EXTRACT_POSTS_JS),

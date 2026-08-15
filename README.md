@@ -599,10 +599,22 @@ membership.
 `python main.py test-keywords "<paste a post here>"`. If that says YES but nothing
 arrives, run `python main.py check -v` and look for `skip` lines in the output.
 
-**Posts come through with empty or garbled text** — Facebook changed its markup.
-Run `python main.py dump` and look at `debug/dump_<group>.json`: if `text_source`
-says `fallback`, the primary selectors in `fbwatch/extract_js.py` need updating;
-the saved `.html` shows the current structure.
+**0 posts read, no errors** — Facebook changed its markup and the extractor no
+longer recognises a post. Run `python main.py dump`: if it reports feed items but
+`posts parsed: 0`, that's the case. `debug/dump_<group>.html` is the page as the
+scraper saw it, and `dump_<group>.json` is what it managed to pull out.
+
+Posts are found by working outwards from the message body
+(`[data-ad-rendering-role="story_message"]`) and the byline
+(`[data-ad-rendering-role="profile_name"]`) to the enclosing feed item, with
+`div[role="article"]` kept as a fallback for older markup. If those attributes
+change, `fbwatch/extract_js.py` is the file to update.
+
+**Notifications have no link to the post** — Facebook renders the timestamp as
+`href="?__cft__[0]=..."` with no post path, so a permalink often isn't in the page
+at all. Where a post has a visible comment, its link carries the parent post id
+and that is used instead; otherwise the notification links to the group. Posts are
+still de-duplicated correctly, by a hash of author plus text.
 
 **"Chromium could not start"**, or Playwright logs `exitCode=127` — the browser
 binary is there but its system libraries aren't. That's the usual state of a

@@ -50,5 +50,40 @@
 <!-- Not a post: no text and no permalink, must be skipped entirely -->
 <div role="article"><div role="button">Naloži več</div></div>
 
+<!--
+  Post 4+: the markup Facebook actually serves now. Posts are virtualised feed
+  items keyed by aria-posinset - role="article" marks only the comments - and
+  the timestamp anchor carries no post path, so there is usually no permalink
+  to be had. Extraction must work from the message body and byline instead.
+-->
+<div role="feed">
+  <div aria-posinset="1"></div>   <!-- virtualised placeholder, not yet rendered -->
+  <div aria-posinset="2"></div>
+
+  <div aria-posinset="31">
+    <div><span data-ad-rendering-role="profile_name"><a href="/groups/555000/user/61591189302748/">Boris Banjanin</a></span></div>
+    <a role="link" href="?__cft__[0]=AZbSvBg8Xxwu" aria-label="Tuesday, August 11, 2026 at 10:25 PM"><span>3d</span></a>
+    <div data-ad-rendering-role="story_message">
+      <div dir="auto">Iščem enoposteljno sobo v Ljubljani za sina.</div>
+    </div>
+    <img src="https://scontent.xx.fbcdn.net/v/p720x720/newphoto.jpg" alt="">
+    <div role="button">Prikaži več</div>
+
+    <!-- an inline comment: its text and avatar must not leak into the post -->
+    <div role="article" aria-label="Comment by Jože Zajec 3 days ago">
+      <div dir="auto">041703375</div>
+      <img src="https://scontent.xx.fbcdn.net/v/p60x60/commenter.jpg" alt="">
+      <a href="https://www.facebook.com/groups/555000/posts/10163383368366317/?comment_id=10163385328911317">3d</a>
+    </div>
+  </div>
+
+  <div aria-posinset="32">
+    <div><span data-ad-rendering-role="profile_name">Anonymous participant</span></div>
+    <div data-ad-rendering-role="story_message">
+      <div dir="auto">Oddam garsonjero v Šiški, 450 EUR.</div>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>

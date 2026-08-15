@@ -103,7 +103,10 @@ class Watcher:
                 if self.store.has(sub.name, group.slug, post.post_id):
                     continue
                 totals["new"] += 1
-                self.store.add(sub.name, group.slug, post.post_id)
+                # A dry run must leave no trace, or testing your rules would
+                # silently consume the posts a real run would have sent.
+                if notify:
+                    self.store.add(sub.name, group.slug, post.post_id)
 
                 if first_time[sub.name] and not self.cfg.notify_on_first_run:
                     seeded[sub.name] += 1
@@ -149,7 +152,8 @@ class Watcher:
                     name, group.name, count,
                 )
 
-        self.store.save()
+        if notify:
+            self.store.save()
         return totals
 
     # -- one cycle -------------------------------------------------------

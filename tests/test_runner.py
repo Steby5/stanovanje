@@ -187,12 +187,31 @@ class TestDeliveryFailure(RunnerTestCase):
 
 
 class TestDryRun(RunnerTestCase):
-    def test_dry_run_sends_nothing_but_still_records(self):
+    def test_dry_run_sends_nothing(self):
         scraper = StubScraper([post("1", "Oddam sobo v Ljubljani")])
         w, notifier = self.watcher()
         stats = w.check_group(scraper, GROUP, notify=False)
         self.assertEqual(stats["matched"], 1)
         self.assertEqual(notifier.sent, [])
+
+    def test_dry_run_leaves_no_trace(self):
+        # Otherwise checking your rules would quietly eat the posts that a real
+        # run was about to notify you about.
+        scraper = StubScraper([post("1", "Oddam sobo v Ljubljani")])
+        w, notifier = self.watcher()
+        w.check_group(scraper, GROUP, notify=False)
+        self.assertEqual(w.store.count(), 0)
+
+        stats = w.check_group(scraper, GROUP)
+        self.assertEqual(stats["sent"], 1)
+        self.assertEqual(len(notifier.sent), 1)
+
+    def test_repeated_dry_runs_report_the_same_thing(self):
+        scraper = StubScraper([post("1", "Oddam sobo v Ljubljani")])
+        w, _ = self.watcher()
+        first = w.check_group(scraper, GROUP, notify=False)
+        second = w.check_group(scraper, GROUP, notify=False)
+        self.assertEqual(first, second)
 
 
 class TestEmbedBuilding(RunnerTestCase):

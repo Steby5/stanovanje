@@ -346,7 +346,7 @@ def cmd_dump(cfg: Config, args) -> int:
         json.dumps(posts, indent=2, ensure_ascii=False), encoding="utf-8"
     )
     log.info("URL             : %s", info["url"])
-    log.info("articles in DOM : %s", info["articles"])
+    log.info("feed items      : %s", info["feed_items"])
     log.info("login marker    : %s", info["login_marker"] or "(none - session looks fine)")
     log.info("posts parsed    : %d", len(posts))
     for post in posts[:3]:

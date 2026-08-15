@@ -1,24 +1,25 @@
 """The JavaScript that pulls posts out of a rendered group feed.
 
 This runs inside the page in one round trip.  Facebook's markup has no stable
-class names, so everything keys off structural attributes that survive their
-frequent rewrites: `div[role="article"]` for a post, the `data-ad-*` message
-containers for the body text, and permalink-shaped hrefs for the post URL.
-Every step degrades to a heuristic rather than throwing, and `text_source`
-records which path produced the text so `dump` can show what happened.
+class names and gets rewritten regularly, so everything keys off structural
+attributes and degrades to a heuristic rather than throwing.  `text_source`
+records which path produced the text, so `dump` shows what happened.
+
+Note on post containers: group posts used to be `div[role="article"]`.  They
+are not any more - that role now marks *comments*, and posts are virtualised
+feed items carrying `aria-posinset`.  Rather than chase the wrapper, the code
+works outwards from the parts that identify a post (its message body, its
+author byline) and treats `role="article"` as a fallback for older markup.
 """
 
 EXTRACT_POSTS_JS = r"""
 () => {
-  const norm = (s) => (s || '').replace(/ /g, ' ').replace(/[ \t]+/g, ' ').trim();
-
-  // ---- which elements are posts -------------------------------------
-  const all = Array.from(document.querySelectorAll('div[role="article"]'));
-  // Comments are also role=article; keep only the outermost ones.
-  const tops = all.filter(a => !all.some(b => b !== a && b.contains(a)));
+  const NBSP = String.fromCharCode(160);
+  const norm = (s) => (s || '').split(NBSP).join(' ').replace(/[ \t]+/g, ' ').trim();
 
   const POST_HREF = /facebook\.com\/(?:groups\/[^\/]+\/(?:posts|permalink)\/\d+|permalink\.php|story\.php|share\/p\/|photo\.php|watch\/?\?v=)/i;
   const POST_QUERY = /(?:multi_permalink_id|story_fbid|[?&]fbid)=/i;
+  const RELATIVE_TIME = /^(?:\d+\s*(?:s|m|h|d|w|y|min|hr|ura|uri|ure|dan|dni|teden|tedna|leto)\w*|(?:yesterday|včeraj|vceraj|just now|pravkar)\b.*)$/i;
 
   const TEXT_SELECTORS = [
     'div[data-ad-rendering-role="story_message"]',
@@ -26,65 +27,121 @@ EXTRACT_POSTS_JS = r"""
     'div[data-ad-comet-preview="message"]',
     'div[data-testid="post_message"]',
   ];
+  const AUTHOR_SELECTOR = '[data-ad-rendering-role="profile_name"]';
 
-  // Lines of chrome that appear in innerText but are not part of the post.
   const CHROME = new RegExp(
     '^(?:' + [
       'like','všeč mi je','vsec mi je','comment','komentiraj','komentar','share','deli','delite',
       'see more','prikaži več','prikazi vec','see less','prikaži manj','more','več','vec',
       'all reactions','vse reakcije','top comments','najbolj priljubljeni komentarji',
-      'write a comment','napiši komentar','napisi komentar','view more comments',
+      'write a comment','napiši komentar','napisi komentar','view more comments','reply','odgovori',
       'send','pošlji','poslji','follow','sledi','join','pridruži se','pridruzi se',
       'author','avtor','admin','skrbnik','moderator','anonymous member','anonimni član',
+      'anonymous participant','anonimni udeleženec','group member','član skupine',
       '\\d+[\\s,.]*(?:comments?|komentarj\\w*|shares?|delitev\\w*|ogledov|views?)',
       '\\d+\\s*[hdwmsy]', '\\d+\\s*(?:min|ura|uri|ure|dan|dni|teden|tedna)\\w*',
     ].join('|') + ')$', 'i');
 
   const isChrome = (line) => !line || CHROME.test(line.trim());
+  const isComment = (el) => /^(?:comment|komentar)/i.test(el.getAttribute('aria-label') || '');
 
-  // ---- helpers -------------------------------------------------------
-  function pickPermalink(art) {
-    const anchors = Array.from(art.querySelectorAll('a[href]'));
-    let best = null, bestTime = '';
-    for (const a of anchors) {
+  // ---- which elements are posts -------------------------------------
+  function climbToPost(el) {
+    for (let node = el, i = 0; node && i < 30; node = node.parentElement, i++) {
+      if (node.hasAttribute('aria-posinset')) return node;
+      if (node.getAttribute('role') === 'article' && !isComment(node)) return node;
+    }
+    return null;
+  }
+
+  function postContainers() {
+    const out = [];
+    const add = (el) => {
+      if (!el) return;
+      // Never keep a container nested inside one already collected.
+      if (out.some(o => o === el || o.contains(el) || el.contains(o))) return;
+      out.push(el);
+    };
+
+    // Posts with a message body, and photo-only posts that still have a byline.
+    for (const el of document.querySelectorAll(TEXT_SELECTORS.join(',') + ',' + AUTHOR_SELECTOR)) {
+      add(climbToPost(el));
+    }
+
+    // Older markup: a top-level article that isn't a comment.
+    const arts = Array.from(document.querySelectorAll('div[role="article"]'));
+    for (const art of arts) {
+      if (isComment(art)) continue;
+      if (arts.some(b => b !== art && b.contains(art))) continue;
+      add(art);
+    }
+
+    // Collected by selector, so restore feed order: the caller notifies
+    // oldest-first by reversing this list, which only works if it is in the
+    // order the posts appear on the page.
+    out.sort((a, b) => {
+      const rel = a.compareDocumentPosition(b);
+      if (rel & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+      if (rel & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+      return 0;
+    });
+    return out;
+  }
+
+  // ---- fields --------------------------------------------------------
+  function pickPermalink(post) {
+    // Facebook often renders the timestamp as href="?__cft__[0]=..." with no
+    // path, so a post's own link is frequently absent.  When a comment is
+    // shown inline its link carries the parent post id, which is as good.
+    for (const a of post.querySelectorAll('a[href]')) {
       const href = a.href || '';
       if (!href || href.startsWith('javascript:')) continue;
       if (!POST_HREF.test(href) && !POST_QUERY.test(href)) continue;
-      // The header timestamp link comes first in DOM order and is the one
-      // that points at the post itself rather than at a comment or reaction.
-      if (!best) {
-        best = href;
-        bestTime = norm(a.innerText) || a.getAttribute('aria-label') || '';
-      }
+      return href.replace(/([?&])comment_id=[^&]*/, '$1').replace(/[?&]$/, '');
     }
-    return { permalink: best, timestamp: bestTime };
+    return '';
   }
 
-  function pickAuthor(art) {
-    const header = art.querySelector('h2, h3, h4');
+  function pickTimestamp(post) {
+    for (const a of post.querySelectorAll('a[role="link"], a[href], abbr')) {
+      const label = a.getAttribute('aria-label') || '';
+      if (/\d{4}/.test(label) && /\d/.test(label)) return norm(label);
+      const text = norm(a.innerText);
+      if (text && text.length <= 20 && RELATIVE_TIME.test(text)) return text;
+    }
+    for (const el of post.querySelectorAll('span, div')) {
+      const text = norm(el.innerText);
+      if (text && text.length <= 12 && RELATIVE_TIME.test(text)) return text;
+    }
+    return '';
+  }
+
+  function pickAuthor(post) {
+    const byline = post.querySelector(AUTHOR_SELECTOR);
+    if (byline) {
+      const link = byline.querySelector('a[href]') || byline.closest('a[href]');
+      const name = norm(byline.innerText).split('\n')[0];
+      if (name) return { author: name, author_url: link ? link.href : '' };
+    }
+    const header = post.querySelector('h2, h3, h4');
     if (header) {
       const a = header.querySelector('a[href]');
-      if (a) {
-        const name = norm(a.innerText);
-        if (name) return { author: name, author_url: a.href };
-      }
-      const name = norm(header.innerText);
-      if (name) return { author: name.split('\n')[0], author_url: '' };
+      const name = norm(a ? a.innerText : header.innerText).split('\n')[0];
+      if (name) return { author: name, author_url: a ? a.href : '' };
     }
-    for (const a of Array.from(art.querySelectorAll('a[href]'))) {
+    for (const a of post.querySelectorAll('a[href]')) {
       const href = a.href || '';
-      if (/\/(?:user|profile\.php|people)\b/i.test(href) ||
-          (/facebook\.com\/[^\/?#]+\/?$/i.test(href) && !/\/groups\//i.test(href))) {
-        const name = norm(a.innerText);
-        if (name && name.length < 90) return { author: name, author_url: href };
+      if (/\/(?:user|profile\.php|people)\b/i.test(href)) {
+        const name = norm(a.innerText) || a.getAttribute('aria-label') || '';
+        if (name && name.length < 90) return { author: norm(name), author_url: href };
       }
     }
     return { author: '', author_url: '' };
   }
 
-  function textFromSelectors(art) {
+  function textFromSelectors(post) {
     for (const sel of TEXT_SELECTORS) {
-      const el = art.querySelector(sel);
+      const el = post.querySelector(sel);
       if (el) {
         const t = (el.innerText || '').trim();
         if (t) return t;
@@ -93,14 +150,19 @@ EXTRACT_POSTS_JS = r"""
     return '';
   }
 
-  function textFromFallback(art) {
-    // Facebook renders body copy in dir="auto" blocks.  Take those that are
-    // not part of the header, a link, or a button, then drop fragments that
-    // are already contained in a longer sibling (the DOM nests them).
-    const raw = Array.from(art.querySelectorAll('div[dir="auto"], span[dir="auto"]'))
+  // True when the node sits inside a comment nested in this post - as opposed
+  // to inside the post itself, which in the older markup is also an article.
+  const inNestedComment = (el, post) => {
+    const art = el.closest('[role="article"]');
+    return !!art && art !== post;
+  };
+
+  function textFromFallback(post) {
+    const raw = Array.from(post.querySelectorAll('div[dir="auto"], span[dir="auto"]'))
       .filter(el => !el.closest('h2, h3, h4') &&
                     !el.closest('a') &&
                     !el.closest('[role="button"]') &&
+                    !inNestedComment(el, post) &&
                     !el.closest('ul[role="list"]'))
       .map(el => (el.innerText || '').trim())
       .filter(t => t.length > 0);
@@ -114,20 +176,20 @@ EXTRACT_POSTS_JS = r"""
     return lines.join('\n').trim();
   }
 
-  function pickImages(art) {
+  function pickImages(post) {
     const out = [];
-    for (const im of Array.from(art.querySelectorAll('img'))) {
+    for (const im of Array.from(post.querySelectorAll('img'))) {
       const src = im.currentSrc || im.src || '';
       if (!src || !/^https?:/i.test(src)) continue;
       if (/\bemoji\b|\/rsrc\.php|static\.xx\.fbcdn\.net/i.test(src)) continue;
       if (/profile picture|profilna/i.test(im.getAttribute('alt') || '')) continue;
-      if (im.closest('h2, h3, h4')) continue;             // author avatar
+      if (im.closest('h2, h3, h4')) continue;
       if (im.closest('a[href*="/user/"], a[href*="profile.php"]')) continue;
-      // Thumbnails encode their size in the path; skip the small ones.
+      if (inNestedComment(im, post)) continue;               // a commenter's avatar
       const sized = src.match(/\/[ps](\d{2,4})x(\d{2,4})\//);
       if (sized && (+sized[1] < 200 || +sized[2] < 200)) continue;
       const r = im.getBoundingClientRect();
-      if (r.width && r.width < 150) continue;             // 0 when media is blocked
+      if (r.width && r.width < 150) continue;
       if (!out.includes(src)) out.push(src);
       if (out.length >= 4) break;
     }
@@ -136,33 +198,27 @@ EXTRACT_POSTS_JS = r"""
 
   // ---- collect -------------------------------------------------------
   const results = [];
-  for (const art of tops) {
-    const label = art.getAttribute('aria-label') || '';
-    if (/^(?:comment|komentar)/i.test(label)) continue;
+  for (const post of postContainers()) {
+    const { author, author_url } = pickAuthor(post);
 
-    const { permalink, timestamp } = pickPermalink(art);
-    const { author, author_url } = pickAuthor(art);
-
-    let text = textFromSelectors(art);
+    let text = textFromSelectors(post);
     let text_source = 'selector';
     if (!text) {
-      text = textFromFallback(art);
+      text = textFromFallback(post);
       text_source = 'fallback';
     }
-    // Drop the author name if it leaked in as the first line.
-    if (author && text.startsWith(author)) {
-      text = text.slice(author.length).trim();
-    }
+    if (author && text.startsWith(author)) text = text.slice(author.length).trim();
 
-    if (!text && !permalink) continue;   // not a real post
+    const permalink = pickPermalink(post);
+    if (!text && !permalink) continue;   // an empty virtualised placeholder
 
     results.push({
-      permalink: permalink || '',
-      timestamp: timestamp || '',
+      permalink,
+      timestamp: pickTimestamp(post),
       author, author_url,
       text: text.trim(),
       text_source,
-      images: pickImages(art),
+      images: pickImages(post),
     });
   }
   return results;
@@ -189,6 +245,15 @@ SEE_MORE_LABELS = {
     "prikaži još",
     "prikazi jos",
 }
+
+# Anything that identifies a rendered post, for waiting on the feed and for
+# counting how much has loaded.  Kept in one place because the wrapper element
+# has changed before and will again.
+POST_MARKER_SELECTOR = (
+    'div[role="feed"] [aria-posinset], '
+    '[data-ad-rendering-role="story_message"], '
+    'div[role="article"]'
+)
 
 # A logged-out or checkpointed page shows one of these instead of the feed.
 LOGIN_MARKERS_JS = r"""
