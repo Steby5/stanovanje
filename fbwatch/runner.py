@@ -9,7 +9,7 @@ import time
 import requests
 
 from .control import DiscordControl
-from .delivery import Mailbox
+from .delivery import Dispatcher
 from .facebook import FacebookScraper, LoginRequired, ScrapeError
 from .models import Group, Post, load_groups
 from .notify import DiscordNotifier
@@ -23,17 +23,17 @@ ERROR_ALERT_THRESHOLD = 3
 
 
 class Watcher:
-    def __init__(self, cfg, notifier: DiscordNotifier | None = None, mailbox_factory=None):
+    def __init__(self, cfg, notifier: DiscordNotifier | None = None, dispatcher_factory=None):
         self.cfg = cfg
         # Admin channel: where operational warnings go, separate from the
-        # per-subscriber notification mailboxes.
+        # per-subscriber notification routing.
         self.notifier = notifier or DiscordNotifier(cfg)
         # Overridable so tests (and any future transport) can swap delivery out.
-        self._mailbox_factory = mailbox_factory or Mailbox
+        self._dispatcher_factory = dispatcher_factory or Dispatcher
         self.store = SeenStore(cfg.state_path, cfg.state_retention_days)
         self.groups: list[Group] = []
         self.subscribers: list[Subscriber] = []
-        self.mailboxes: dict[str, Mailbox] = {}
+        self.dispatcher = None
         self.session = requests.Session()
         self._consecutive_failures = 0
         self._alerted = False
@@ -59,10 +59,9 @@ class Watcher:
             raise ValueError(f"{self.cfg.groups_path} has no groups in it")
 
         self.subscribers = load_subscribers(self.cfg)
-        self.mailboxes = {
-            sub.name: self._mailbox_factory(self.cfg, sub, session=self.session)
-            for sub in self.subscribers
-        }
+        self.dispatcher = self._dispatcher_factory(
+            self.cfg, self.subscribers, session=self.session
+        )
 
         # State written before multi-user support belongs to the primary user.
         if not self._adopted_legacy:
@@ -78,68 +77,77 @@ class Watcher:
 
     # -- one group -------------------------------------------------------
     def check_group(self, scraper, group: Group, notify: bool = True) -> dict:
-        """Scrape one group once, then notify each interested subscriber.
+        """Scrape one group once, then notify everyone the posts matched.
 
-        Posts are handled oldest-first so they arrive in the order they were
-        actually posted.
+        Posts drive the loop rather than subscribers, so a post matching
+        several people who share a channel becomes one message mentioning them
+        all, instead of the same listing arriving once per person.  Posts are
+        handled oldest-first so they arrive in the order they were posted.
         """
         posts: list[Post] = scraper.scrape_group(group)
         totals = {"seen": len(posts), "new": 0, "matched": 0, "sent": 0}
 
-        for sub in self.subscribers:
-            if not sub.watches(group):
-                continue
-            if not sub.deliverable:
-                continue
+        watchers = [s for s in self.subscribers if s.watches(group) and s.deliverable]
+        if not watchers:
+            return totals
 
-            first_time = not self.store.knows_group(sub.name, group.slug)
-            new = matched = sent = 0
+        # A subscriber's first sight of a group is its whole visible feed;
+        # record it but stay quiet, per subscriber rather than per group.
+        first_time = {s.name: not self.store.knows_group(s.name, group.slug) for s in watchers}
+        seeded = {s.name: 0 for s in watchers}
 
-            for post in reversed(posts):
+        for post in reversed(posts):
+            matches: list[tuple] = []
+
+            for sub in watchers:
                 if self.store.has(sub.name, group.slug, post.post_id):
                     continue
-                new += 1
+                totals["new"] += 1
                 self.store.add(sub.name, group.slug, post.post_id)
 
-                # On a subscriber's first poll of a group the whole visible feed
-                # is "new".  Record it, but stay quiet unless asked otherwise.
-                if first_time and not self.cfg.notify_on_first_run:
+                if first_time[sub.name] and not self.cfg.notify_on_first_run:
+                    seeded[sub.name] += 1
                     continue
 
                 result = sub.matcher.match(post.text)
                 if not result.matched:
                     log.debug("%s: skip %s (%s)", sub.name, post.url, result.reason)
                     continue
-                matched += 1
+                totals["matched"] += 1
 
                 # Paused means "mute": keep recording so resuming does not
                 # replay everything that piled up in the meantime.
                 if self.paused:
                     continue
 
-                if not notify:
-                    log.info("[dry run] %s would get: %s — %s", sub.name, result.reason, post.url)
-                    sent += 1
-                    continue
+                matches.append((sub, result))
 
-                if self.mailboxes[sub.name].send_post(post, result):
-                    sent += 1
+            if not matches:
+                continue
+
+            if not notify:
+                for sub, result in matches:
+                    log.info("[dry run] %s would get: %s — %s", sub.name, result.reason, post.url)
+                totals["sent"] += len(matches)
+                continue
+
+            delivered = self.dispatcher.deliver(post, matches)
+            totals["sent"] += len(delivered)
+            for sub, result in matches:
+                if sub.name in delivered:
                     log.info("-> %s: %s [%s]", sub.name, post.url, result.reason)
                 else:
-                    # Delivery failed everywhere - forget it so the next cycle
-                    # retries rather than silently losing the post.
+                    # Delivery failed - forget it so the next cycle retries
+                    # rather than silently losing the post for this person.
                     self.store.forget(sub.name, group.slug, post.post_id)
                     log.warning("%s: delivery failed, retrying next cycle: %s", sub.name, post.url)
 
-            if first_time and not self.cfg.notify_on_first_run and new:
+        for name, count in seeded.items():
+            if count:
                 log.info(
                     "%s/%s: first poll, recorded %d existing post(s) without notifying",
-                    sub.name, group.name, new,
+                    name, group.name, count,
                 )
-
-            totals["new"] += new
-            totals["matched"] += matched
-            totals["sent"] += sent
 
         self.store.save()
         return totals
@@ -192,7 +200,7 @@ class Watcher:
         for sub in active:
             log.info(
                 "  %-16s %d rule(s) -> %s",
-                sub.name, len(sub.matcher.includes), self.mailboxes[sub.name].describe(),
+                sub.name, len(sub.matcher.includes), self.dispatcher.describe(sub),
             )
         if not active:
             log.error(

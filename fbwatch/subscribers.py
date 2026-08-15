@@ -41,6 +41,9 @@ class Subscriber:
     discord_webhook_url: str = ""
     telegram_chat_id: str = ""
     discord_user_id: str = ""
+    # @-mention this person on their posts.  Needed when several people share a
+    # channel; set false to be notified quietly in a channel of your own.
+    mention: bool = True
     # Which groups they care about.  Empty means all of them.
     groups: list = field(default_factory=list)
 

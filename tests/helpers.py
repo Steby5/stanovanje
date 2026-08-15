@@ -60,42 +60,56 @@ class StubNotifier(DiscordNotifier):
         return True
 
 
-class StubMailbox:
-    """Captures per-subscriber delivery instead of doing any HTTP.
+class StubDispatcher:
+    """Captures delivery instead of doing any HTTP.
 
-    Instances share `inbox`, keyed by subscriber name, so a test can assert on
-    who received what after a fan-out.
+    `inbox` is keyed by subscriber name so tests can assert who received what,
+    and `batches` records each grouped send as (webhook_url, [names]) so tests
+    can assert that people sharing a channel got a single message.
     """
 
-    def __init__(self, cfg, sub, session=None, inbox=None, fail=()):
+    def __init__(self, cfg, subscribers, session=None, inbox=None, batches=None, fail=()):
         self.cfg = cfg
-        self.name = sub.name
+        self.subscribers = list(subscribers)
         self.inbox = inbox if inbox is not None else {}
+        self.batches = batches if batches is not None else []
         self.fail = fail
-        self.inbox.setdefault(self.name, [])
+        for sub in self.subscribers:
+            self.inbox.setdefault(sub.name, [])
 
-    @property
-    def enabled(self):
-        return True
+    def deliver(self, post, matches):
+        delivered = set()
+        grouped: dict[str, list] = {}
+        for sub, result in matches:
+            grouped.setdefault(sub.discord_webhook_url or f"~{sub.name}", []).append((sub, result))
 
-    def send_post(self, post, result):
-        if self.name in self.fail:
-            return False
-        self.inbox[self.name].append((post, result))
-        return True
+        for target, recipients in grouped.items():
+            names = [s.name for s, _ in recipients]
+            if any(n in self.fail for n in names):
+                continue  # whole batch fails, as a failed HTTP send would
+            self.batches.append((target, names))
+            for sub, result in recipients:
+                self.inbox[sub.name].append((post, result))
+                delivered.add(sub.name)
+        return delivered
 
-    def send_text(self, message):
-        self.inbox[self.name].append(("text", message))
-        return True
-
-    def describe(self):
+    def describe(self, sub):
         return "stub"
 
+    def shared_with(self, sub):
+        same = sum(
+            1 for s in self.subscribers
+            if s.discord_webhook_url and s.discord_webhook_url == sub.discord_webhook_url
+        )
+        return max(0, same - 1)
 
-def stub_mailboxes(inbox: dict, fail=()):
-    """Build a mailbox_factory for Watcher that writes into `inbox`."""
 
-    def factory(cfg, sub, session=None):
-        return StubMailbox(cfg, sub, session=session, inbox=inbox, fail=fail)
+def stub_dispatcher(inbox: dict, fail=(), batches=None):
+    """Build a dispatcher_factory for Watcher that writes into `inbox`."""
+
+    def factory(cfg, subscribers, session=None):
+        return StubDispatcher(
+            cfg, subscribers, session=session, inbox=inbox, batches=batches, fail=fail
+        )
 
     return factory

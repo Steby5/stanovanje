@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from helpers import StubScraper, make_group, make_post, stub_mailboxes  # noqa: E402
+from helpers import StubScraper, make_group, make_post, stub_dispatcher  # noqa: E402
 
 from fbwatch.config import Config  # noqa: E402
 from fbwatch.runner import Watcher  # noqa: E402
@@ -60,7 +60,7 @@ class MultiUserBase(unittest.TestCase):
         self.cfg.notify_on_first_run = True
 
         self.inbox: dict = {}
-        self.watcher = Watcher(self.cfg, mailbox_factory=stub_mailboxes(self.inbox))
+        self.watcher = Watcher(self.cfg, dispatcher_factory=stub_dispatcher(self.inbox))
         self.watcher.reload_inputs()
 
     def tearDown(self):
@@ -141,7 +141,7 @@ class TestHistoryIsolation(MultiUserBase):
         self.assertEqual(self.received("bojan"), ["2"])
 
     def test_a_failed_delivery_only_retries_for_that_person(self):
-        self.watcher._mailbox_factory = stub_mailboxes(self.inbox, fail=("ana",))
+        self.watcher._dispatcher_factory = stub_dispatcher(self.inbox, fail=("ana",))
         self.watcher.reload_inputs()
         scraper = StubScraper([make_post("1", "Oddam sobo", GROUP)])
         self.watcher.check_group(scraper, GROUP)
@@ -149,7 +149,7 @@ class TestHistoryIsolation(MultiUserBase):
         self.assertEqual(self.received("ana"), [])
 
         # Ana's delivery starts working: she gets it, domin is not re-sent.
-        self.watcher._mailbox_factory = stub_mailboxes(self.inbox)
+        self.watcher._dispatcher_factory = stub_dispatcher(self.inbox)
         self.watcher.reload_inputs()
         self.watcher.check_group(scraper, GROUP)
         self.assertEqual(self.received("domin"), ["1"])

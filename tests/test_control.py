@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from helpers import StubScraper, make_group, make_post, stub_mailboxes  # noqa: E402
+from helpers import StubScraper, make_group, make_post, stub_dispatcher  # noqa: E402
 
 from fbwatch.config import Config  # noqa: E402
 from fbwatch.control import DiscordControl  # noqa: E402
@@ -85,7 +85,7 @@ class ControlTestCase(unittest.TestCase):
         self.cfg.discord_control_channel_id = "999"
 
         self.inbox: dict = {}
-        self.watcher = Watcher(self.cfg, mailbox_factory=stub_mailboxes(self.inbox))
+        self.watcher = Watcher(self.cfg, dispatcher_factory=stub_dispatcher(self.inbox))
         self.watcher.reload_inputs()
         self.session = FakeSession()
         self.control = DiscordControl(self.cfg, self.watcher, session=self.session)

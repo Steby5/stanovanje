@@ -374,7 +374,7 @@ def cmd_list(cfg: Config, args) -> int:
         marks = [m for m in ("admin" if sub.admin else "", "" if sub.enabled else "disabled") if m]
         suffix = f"  [{', '.join(marks)}]" if marks else ""
         rules = len(sub.matcher.includes) if sub.matcher else 0
-        where = watcher.mailboxes[sub.name].describe()
+        where = watcher.dispatcher.describe(sub)
         print(f"  - {sub.name:<16}{suffix}")
         print(f"      rules   : {rules} from {sub.keywords_path(cfg).name}")
         print(f"      sends to: {where}")

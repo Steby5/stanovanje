@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from helpers import StubScraper, make_group, make_post, stub_mailboxes  # noqa: E402
+from helpers import StubScraper, make_group, make_post, stub_dispatcher  # noqa: E402
 
 from fbwatch.config import Config  # noqa: E402
 from fbwatch.notify import DiscordNotifier  # noqa: E402
@@ -54,7 +54,7 @@ class RunnerTestCase(unittest.TestCase):
         inbox: dict = {}
         w = Watcher(
             self.cfg,
-            mailbox_factory=stub_mailboxes(inbox, fail=(ME,) if fail else ()),
+            dispatcher_factory=stub_dispatcher(inbox, fail=(ME,) if fail else ()),
         )
         w.reload_inputs()
         return w, _InboxView(inbox, ME)
@@ -179,7 +179,7 @@ class TestDeliveryFailure(RunnerTestCase):
 
         # Delivery starts working: the post must come back rather than be lost.
         inbox: dict = {}
-        w._mailbox_factory = stub_mailboxes(inbox)
+        w._dispatcher_factory = stub_dispatcher(inbox)
         w.reload_inputs()
         stats = w.check_group(scraper, GROUP)
         self.assertEqual(stats["sent"], 1)

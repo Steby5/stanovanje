@@ -92,6 +92,32 @@ class DiscordNotifier:
         embed["timestamp"] = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
         return embed
 
+    def build_shared_embed(self, post: Post, recipients: list[tuple]) -> dict:
+        """Embed for one post going to a channel several people share.
+
+        With a single recipient this is the ordinary embed.  With more, the
+        per-person "Matched" line is replaced by a breakdown, so everyone can
+        see at a glance whether the post is for them.
+        """
+        if len(recipients) == 1:
+            return self.build_embed(post, recipients[0][1])
+
+        embed = self.build_embed(post, MatchResult(matched=True))
+        lines = []
+        for sub, result in recipients:
+            who = f"<@{sub.discord_user_id}>" if sub.discord_user_id else f"**{sub.name}**"
+            rules = ", ".join(f"`{r}`" for r in result.matched_rules) or "—"
+            lines.append(f"{who} — {rules}")
+        embed["fields"].insert(
+            0,
+            {
+                "name": f"Matched for {len(recipients)}",
+                "value": truncate("\n".join(lines), MAX_FIELD_VALUE),
+                "inline": False,
+            },
+        )
+        return embed
+
     # -- sending --------------------------------------------------------
     def send_post(self, post: Post, result: MatchResult) -> bool:
         if not self.enabled:
@@ -99,6 +125,29 @@ class DiscordNotifier:
             return False
         content = post.url or None  # gives a clickable link even if embeds are off
         return self._post({"embeds": [self.build_embed(post, result)], "content": content})
+
+    def send_post_to(self, post: Post, recipients: list[tuple]) -> bool:
+        """Send one message to this webhook, @-mentioning whoever it matched.
+
+        `recipients` is [(Subscriber, MatchResult)] for people sharing this
+        webhook.  Only their ids are allowed as mentions, so a post whose text
+        contains "@everyone" still cannot ping the server.
+        """
+        if not self.enabled:
+            log.warning("No Discord webhook configured - not sending %s", post.url or post.post_id)
+            return False
+
+        mention_ids = [
+            sub.discord_user_id for sub, _ in recipients if sub.discord_user_id and sub.mention
+        ]
+        mentions = " ".join(f"<@{uid}>" for uid in mention_ids)
+        content = f"{mentions}\n{post.url}".strip() if mentions else (post.url or None)
+
+        return self._post({
+            "embeds": [self.build_shared_embed(post, recipients)],
+            "content": content,
+            "allowed_mentions": {"parse": [], "users": mention_ids},
+        })
 
     def send_text(self, message: str) -> bool:
         if not self.enabled:

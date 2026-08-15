@@ -18,6 +18,15 @@
     "_note": "Own webhook, own trigger words. Gets nothing until keywords/ana.txt has at least one rule."
   },
 
+  "bo": {
+    "enabled": true,
+    "keywords_file": "keywords/bo.txt",
+    "discord_webhook_url": "https://discord.com/api/webhooks/XXXX/YYYY",
+    "discord_user_id": "222222222222222222",
+    "mention": true,
+    "_note": "Give two people the SAME discord_webhook_url and they share one channel: each matched post is posted there once and @-mentions whoever it matched, instead of arriving twice. Needs discord_user_id to mention them. Set mention:false to receive posts without being pinged."
+  },
+
   "marko": {
     "enabled": true,
     "keywords_file": "keywords/marko.txt",

@@ -105,6 +105,16 @@ matches everything else you asked for.
 Changes take effect on the next check — usually within five minutes. You don't
 need to restart anything.
 
+### If you share a channel with other people
+
+Everyone sees every post the watcher finds for the group, but each post
+`@`-mentions only the people whose trigger words it matched. So set that channel
+to **Notification Settings → Only @mentions** and your phone stays quiet until
+something is genuinely for you.
+
+The embed says who each post matched and why, so `@ana — garsonjera` tells you at
+a glance that this one isn't yours.
+
 ---
 
 ## Writing trigger words that work

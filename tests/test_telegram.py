@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from helpers import make_group, make_post  # noqa: E402
 
 from fbwatch.config import Config  # noqa: E402
-from fbwatch.delivery import Mailbox  # noqa: E402
+from fbwatch.delivery import Dispatcher  # noqa: E402
 from fbwatch.matcher import KeywordMatcher, MatchResult  # noqa: E402
 from fbwatch.subscribers import Subscriber  # noqa: E402
 from fbwatch.telegram import TelegramNotifier, recent_chats  # noqa: E402
@@ -139,7 +139,7 @@ class TestRecentChats(unittest.TestCase):
         self.assertEqual(recent_chats(cfg_with_token(), session=FakeSession(status=401)), [])
 
 
-class TestMailboxRouting(unittest.TestCase):
+class TestDispatcherRouting(unittest.TestCase):
     """A subscriber may have Discord, Telegram, or both."""
 
     def setUp(self):
@@ -150,54 +150,69 @@ class TestMailboxRouting(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def describe(self, sub, cfg=None):
+        return Dispatcher(cfg or self.cfg, [sub]).describe(sub)
+
     def test_discord_only(self):
-        box = Mailbox(self.cfg, Subscriber(name="ana", discord_webhook_url=WEBHOOK))
-        self.assertEqual(box.describe(), "Discord")
+        self.assertEqual(self.describe(Subscriber(name="ana", discord_webhook_url=WEBHOOK)), "Discord")
 
     def test_telegram_only(self):
-        box = Mailbox(self.cfg, Subscriber(name="ana", telegram_chat_id="999"))
-        self.assertEqual(box.describe(), "Telegram")
+        self.assertEqual(self.describe(Subscriber(name="ana", telegram_chat_id="999")), "Telegram")
 
     def test_both(self):
-        box = Mailbox(
-            self.cfg,
-            Subscriber(name="ana", discord_webhook_url=WEBHOOK, telegram_chat_id="999"),
-        )
-        self.assertEqual(box.describe(), "Discord, Telegram")
+        sub = Subscriber(name="ana", discord_webhook_url=WEBHOOK, telegram_chat_id="999")
+        self.assertEqual(self.describe(sub), "Discord, Telegram")
 
     def test_neither(self):
-        box = Mailbox(self.cfg, Subscriber(name="ana"))
-        self.assertEqual(box.describe(), "nowhere")
-        self.assertFalse(box.enabled)
+        self.assertEqual(self.describe(Subscriber(name="ana")), "nowhere")
 
     def test_telegram_ignored_without_a_bot_token(self):
         cfg = Config()
         cfg.base_dir = Path(self.tmp.name)
-        box = Mailbox(cfg, Subscriber(name="ana", telegram_chat_id="999"))
-        self.assertEqual(box.describe(), "nowhere")
+        self.assertEqual(self.describe(Subscriber(name="ana", telegram_chat_id="999"), cfg), "nowhere")
 
-    def test_one_broken_channel_does_not_lose_the_other(self):
+    def test_describe_flags_a_shared_channel(self):
+        subs = [
+            Subscriber(name="ana", discord_webhook_url=WEBHOOK),
+            Subscriber(name="bo", discord_webhook_url=WEBHOOK),
+            Subscriber(name="cvet", discord_webhook_url="https://discord.com/api/webhooks/9/zzz"),
+        ]
+        dispatcher = Dispatcher(self.cfg, subs)
+        self.assertIn("shared with 1", dispatcher.describe(subs[0]))
+        self.assertEqual(dispatcher.describe(subs[2]), "Discord")
+
+    def test_telegram_delivers_per_person(self):
+        session = FakeSession()
+        subs = [
+            Subscriber(name="ana", telegram_chat_id="111"),
+            Subscriber(name="bo", telegram_chat_id="222"),
+        ]
+        dispatcher = Dispatcher(self.cfg, subs, session=session)
+        post = make_post("1", "Oddam sobo", GROUP)
+        result = MatchResult(matched=True)
+
+        delivered = dispatcher.deliver(post, [(subs[0], result), (subs[1], result)])
+        self.assertEqual(delivered, {"ana", "bo"})
+        self.assertEqual([p["body"]["chat_id"] for p in session.posts], ["111", "222"])
+
+    def test_a_broken_channel_does_not_lose_the_other(self):
         class Broken:
             enabled = True
 
             def send_post(self, post, result):
                 raise RuntimeError("boom")
 
-        class Works:
-            enabled = True
+        sub_tg = Subscriber(name="ana", telegram_chat_id="111")
+        session = FakeSession()
+        dispatcher = Dispatcher(self.cfg, [sub_tg], session=session)
+        # Pretend Ana also has a Discord webhook whose notifier explodes.
+        sub_tg.discord_webhook_url = WEBHOOK
+        dispatcher._discord[WEBHOOK] = Broken()
 
-            def __init__(self):
-                self.got = []
-
-            def send_post(self, post, result):
-                self.got.append(post)
-                return True
-
-        box = Mailbox(self.cfg, Subscriber(name="ana"))
-        works = Works()
-        box.channels = [Broken(), works]
-        self.assertTrue(box.send_post(make_post("1", "x", GROUP), MatchResult(matched=True)))
-        self.assertEqual(len(works.got), 1)
+        delivered = dispatcher.deliver(
+            make_post("1", "x", GROUP), [(sub_tg, MatchResult(matched=True))]
+        )
+        self.assertEqual(delivered, {"ana"})  # Telegram still got through
 
 
 if __name__ == "__main__":

@@ -362,6 +362,38 @@ Then Ana types `!fbw add garsonjera`, `!fbw mine`, `!fbw test <text>` and only
 her rules change. Admin commands (`user ...`, `group ...`, `pause`, `interval`)
 stay restricted to people with `"admin": true`.
 
+### One shared channel, or a channel each
+
+That's decided by the webhooks, with no separate setting:
+
+- **Different webhooks** → each person gets their own channel and sees only
+  their own matches.
+- **The same webhook** → they share a channel. Each matched post is posted there
+  **once** and `@`-mentions whoever it matched, rather than arriving twice.
+
+The shared setup is usually what you want with friends: everyone sees the whole
+filtered feed, but your phone only buzzes for your own criteria. Have each person
+set that channel to **Notification Settings → Only @mentions**.
+
+```json
+"domin": { "discord_webhook_url": "https://discord.com/api/webhooks/AAA/BBB",
+           "discord_user_id": "111111111111111111" },
+"ana":   { "discord_webhook_url": "https://discord.com/api/webhooks/AAA/BBB",
+           "discord_user_id": "222222222222222222" }
+```
+
+Mentions need `discord_user_id` — without it a person still receives posts, just
+silently. Add `"mention": false` to receive posts without ever being pinged.
+
+Discord has no way to show a message to only some people in a channel (ephemeral
+messages only exist as replies to slash commands, which webhooks can't send), so
+a shared channel means shared visibility. If someone's search should be private,
+give them their own webhook.
+
+> A post whose own text contains `@everyone` can never ping the server: sends
+> whitelist only the matched users' ids and block everyone/here/role mentions
+> outright.
+
 Full file format in `subscribers.example.json`. A person can also watch a subset
 of groups:
 
