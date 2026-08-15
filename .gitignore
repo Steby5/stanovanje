@@ -28,3 +28,7 @@ __pycache__/
 venv/
 env/
 .pytest_cache/
+
+# A session export is a live Facebook login - never commit it.
+session.json
+*.session.json

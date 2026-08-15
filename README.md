@@ -155,6 +155,8 @@ needed.
 | Command | What it does |
 |---|---|
 | `python main.py login` | Log in to Facebook once, save the session |
+| `python main.py export-session` | Save that login, to move to a headless machine |
+| `python main.py import-session` | Load a login exported from another machine |
 | `python main.py check` | Poll every group once and send notifications |
 | `python main.py check --dry-run` | Same, but log matches instead of sending them |
 | `python main.py run` | Poll forever on an interval |
@@ -399,6 +401,53 @@ schtasks /create /tn "fbwatch" /sc onlogon /rl highest ^
 
 `pythonw` runs it without a console window. Check `fbwatch.log` for what it's
 doing, and `schtasks /end /tn fbwatch` to stop it.
+
+---
+
+## Running on a machine with no screen
+
+`headless: true` only affects `check` and `run`. **`login` always opens a real
+window**, whatever the setting — so on a normal PC you log in once with a window
+and everything after that is invisible. Nothing extra to do.
+
+On a server, VPS or container there's no window to open. Copying the
+`browser_profile/` folder across does **not** work: Chromium encrypts cookies
+with the OS keystore (DPAPI on Windows, the keyring on Linux), so a copied
+profile decrypts to nothing on the other machine and looks like "not logged in".
+
+Move the session instead:
+
+```powershell
+# on your PC, after `python main.py login`
+python main.py export-session            # writes session.json
+```
+
+```bash
+# on the server, after copying session.json across
+python main.py import-session            # loads it into browser_profile/
+python main.py check                     # confirm it works
+rm session.json
+```
+
+> `session.json` is a live Facebook login — whoever holds it is signed in as
+> you, no password or 2FA needed. Move it over something private (`scp`, not
+> email), delete it from both machines afterwards, and note it's already in
+> `.gitignore`. If it ever leaks, log out of all sessions in Facebook's Security
+> settings, which invalidates it.
+
+Sessions last months but not forever. When one expires the watcher says so on
+Discord — re-run `login` on the machine with a screen and export again.
+
+**Alternative on Linux:** run the real login through a virtual display, no
+export needed:
+
+```bash
+sudo apt install xvfb
+xvfb-run -a python main.py login
+```
+
+That works if you can reach the machine's browser somehow (X forwarding, VNC).
+Otherwise use the export route.
 
 ---
 

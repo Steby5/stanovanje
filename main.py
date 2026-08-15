@@ -2,6 +2,8 @@
 """fbwatch - watch Facebook groups and ping Discord when an interesting post appears.
 
     python main.py login          log in to Facebook once (opens a real window)
+    python main.py export-session save that login, to move to a headless machine
+    python main.py import-session load a login exported from another machine
     python main.py check          poll every group once, send notifications
     python main.py run            poll forever on an interval
     python main.py seed           record current posts as "seen", notify nothing
@@ -113,6 +115,65 @@ def require_recipients(watcher: Watcher) -> bool:
         "(or --telegram <chat id>), then add trigger words to their keywords file."
     )
     return False
+
+
+def cmd_export_session(cfg: Config, args) -> int:
+    """Save the logged-in session so it can be moved to a headless machine."""
+    from fbwatch.facebook import FacebookScraper
+
+    out = cfg.path(args.output)
+    with FacebookScraper(cfg) as scraper:
+        if not scraper.is_logged_in():
+            log.error("Not logged in on this machine. Run:  python main.py login")
+            return 2
+        cookies = scraper.export_cookies()
+
+    if not cookies:
+        log.error("No Facebook cookies found in %s", cfg.profile_path)
+        return 1
+
+    out.write_text(json.dumps(cookies, indent=1), encoding="utf-8")
+    log.info("Wrote %d cookie(s) to %s", len(cookies), out)
+    log.warning(
+        "That file IS your Facebook login - anyone holding it is signed in as you. "
+        "Move it over a private channel, then delete it from both machines."
+    )
+    return 0
+
+
+def cmd_import_session(cfg: Config, args) -> int:
+    """Load a session exported elsewhere, so a headless machine can start."""
+    from fbwatch.facebook import FacebookScraper
+
+    src = cfg.path(args.input)
+    if not src.exists():
+        log.error("No such file: %s", src)
+        log.error("Create it on a machine with a screen:  python main.py export-session")
+        return 1
+    try:
+        cookies = json.loads(src.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        log.error("%s is not valid JSON: %s", src, exc)
+        return 1
+    if not isinstance(cookies, list):
+        log.error("%s should contain a list of cookies", src)
+        return 1
+
+    with FacebookScraper(cfg) as scraper:
+        loaded = scraper.import_cookies(cookies)
+        if not loaded:
+            log.error("No usable Facebook cookies in %s", src)
+            return 1
+        if scraper.is_logged_in():
+            log.info("Imported %d cookie(s) - the session works. You can delete %s now.",
+                     loaded, src.name)
+            return 0
+
+    log.error(
+        "Imported %d cookie(s) but Facebook still sees no session. The export may be "
+        "stale - log in again on the other machine and re-export.", loaded,
+    )
+    return 2
 
 
 def cmd_check(cfg: Config, args) -> int:
@@ -427,6 +488,14 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("login", help="log in to Facebook once and save the session")
     p.add_argument("--timeout", type=int, default=600, help="seconds to wait (default 600)")
     p.set_defaults(func=cmd_login)
+
+    p = sub.add_parser("export-session", help="save the login for a headless machine")
+    p.add_argument("--output", default="session.json", help="where to write it")
+    p.set_defaults(func=cmd_export_session)
+
+    p = sub.add_parser("import-session", help="load a login exported elsewhere")
+    p.add_argument("--input", default="session.json", help="the exported file")
+    p.set_defaults(func=cmd_import_session)
 
     p = sub.add_parser("check", help="poll every group once")
     p.add_argument("--dry-run", action="store_true", help="log matches instead of sending them")

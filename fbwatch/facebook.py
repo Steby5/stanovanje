@@ -41,6 +41,23 @@ window.chrome = window.chrome || {runtime: {}};
 """
 
 
+# Playwright accepts exactly these keys when adding a cookie back.
+_COOKIE_FIELDS = ("name", "value", "domain", "path", "expires", "httpOnly", "secure", "sameSite")
+
+
+def facebook_cookies(cookies: list[dict]) -> list[dict]:
+    """Keep only facebook.com cookies, trimmed to the fields Playwright wants."""
+    out = []
+    for cookie in cookies or []:
+        domain = str(cookie.get("domain", ""))
+        if "facebook.com" not in domain:
+            continue
+        trimmed = {k: cookie[k] for k in _COOKIE_FIELDS if k in cookie}
+        if trimmed.get("name") and "value" in trimmed and trimmed.get("domain"):
+            out.append(trimmed)
+    return out
+
+
 class LoginRequired(RuntimeError):
     """The saved session is gone or Facebook wants a checkpoint cleared."""
 
@@ -137,6 +154,28 @@ class FacebookScraper:
                 return True
             time.sleep(2)
         return False
+
+    # -- portable sessions ----------------------------------------------
+    def export_cookies(self) -> list[dict]:
+        """Facebook cookies from this profile, for moving to another machine.
+
+        The profile directory itself is not portable - Chromium encrypts
+        cookies with the OS keystore, so a copied profile decrypts to nothing
+        on a different machine or OS.  These are the decrypted values.
+        """
+        if self._ctx is None:
+            raise RuntimeError("FacebookScraper.start() was not called")
+        return facebook_cookies(self._ctx.cookies())
+
+    def import_cookies(self, cookies: list[dict]) -> int:
+        """Load an exported session into this profile.  Returns how many took."""
+        if self._ctx is None:
+            raise RuntimeError("FacebookScraper.start() was not called")
+        usable = facebook_cookies(cookies)
+        if not usable:
+            return 0
+        self._ctx.add_cookies(usable)
+        return len(usable)
 
     # -- scraping -------------------------------------------------------
     def scrape_group(self, group: Group, limit: int | None = None) -> list[Post]:
