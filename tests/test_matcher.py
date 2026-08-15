@@ -166,6 +166,113 @@ class TestFileLevelBehaviour(unittest.TestCase):
         self.assertFalse(matcher("stanovanj").match("Prodam kolo").matched)
 
 
+class TestAliases(unittest.TestCase):
+    """`@lj = a, b, c` — any one member satisfies the term.
+
+    Without this, a rule can only AND, so "+ ljubljana" was silently losing
+    every listing that named a district instead of the city.
+    """
+
+    def alias_matcher(self, *rules):
+        return matcher("@lj = ljubljana, bezigrad, =vic, =vicu, siska", *rules)
+
+    def test_any_member_satisfies_the_term(self):
+        m = self.alias_matcher("oddam + soba + @lj")
+        for text in ("Oddam sobo v Ljubljani", "Oddam sobo, Bezigrad",
+                     "Oddam sobo na Vicu", "Oddam sobo v Siski"):
+            self.assertTrue(m.match(text).matched, text)
+
+    def test_a_place_not_listed_still_misses(self):
+        m = self.alias_matcher("oddam + soba + @lj")
+        self.assertFalse(m.match("Oddam sobo v Mariboru").matched)
+
+    def test_the_other_terms_still_have_to_match(self):
+        m = self.alias_matcher("oddam + soba + @lj")
+        self.assertFalse(m.match("Iscem sobo v Ljubljani").matched)
+
+    def test_definition_order_does_not_matter(self):
+        m = matcher("oddam + @lj", "@lj = ljubljana")
+        self.assertTrue(m.match("Oddam v Ljubljani").matched)
+
+    def test_the_reason_names_the_member_that_hit(self):
+        m = self.alias_matcher("oddam + soba + @lj")
+        self.assertEqual(
+            m.match("Oddam sobo, Bezigrad").matched_rules,
+            ["oddam + soba + @lj→bezigrad"],
+        )
+
+    def test_a_rule_without_an_alias_reports_exactly_as_before(self):
+        self.assertEqual(
+            matcher("oddam + soba").match("Oddam sobo").matched_rules, ["oddam + soba"]
+        )
+
+    def test_members_keep_their_own_syntax(self):
+        m = matcher('@x = "rozna dolina", =btc, re:\\d{4}', "@x")
+        self.assertTrue(m.match("Oddam v Rozna dolina").matched)
+        self.assertTrue(m.match("blizu BTC").matched)
+        self.assertTrue(m.match("cena 1200").matched)
+        self.assertFalse(m.match("rozna barva in dolina").matched)
+
+    def test_an_alias_works_in_an_exclusion(self):
+        m = matcher("@bad = agencija, provizija", "soba", "!@bad")
+        self.assertTrue(m.match("Oddam sobo").matched)
+        self.assertFalse(m.match("Oddam sobo preko agencija").matched)
+
+    def test_a_rule_may_be_only_an_alias(self):
+        m = matcher("@lj = bezigrad", "@lj")
+        self.assertTrue(m.match("Bezigrad").matched)
+
+    def test_the_name_is_case_insensitive(self):
+        m = matcher("@LJ = bezigrad", "oddam + @lj")
+        self.assertTrue(m.match("Oddam, Bezigrad").matched)
+
+    # -- errors, with the line number ------------------------------------
+    def test_an_unknown_alias_is_reported(self):
+        with self.assertRaises(KeywordSyntaxError) as ctx:
+            matcher("oddam + @nope")
+        self.assertIn("no alias called @nope", str(ctx.exception))
+
+    def test_a_nested_alias_is_refused(self):
+        with self.assertRaises(KeywordSyntaxError) as ctx:
+            matcher("@a = x", "@b = @a, y", "@b")
+        self.assertIn("refers to another alias", str(ctx.exception))
+
+    def test_a_duplicate_definition_is_refused(self):
+        with self.assertRaises(KeywordSyntaxError):
+            matcher("@a = x", "@a = y", "@a")
+
+    def test_an_empty_definition_is_refused(self):
+        with self.assertRaises(KeywordSyntaxError):
+            matcher("@a =", "@a")
+
+
+class TestNearMisses(unittest.TestCase):
+    """Finding the rules that are too tight, from real posts."""
+
+    def test_a_rule_failing_on_one_term_is_reported(self):
+        m = matcher("oddam + garsonjera + ljubljana")
+        misses = m.near_misses("Oddam garsonjero na Vicu")
+        self.assertEqual(len(misses), 1)
+        rule, atom = misses[0]
+        self.assertEqual(rule.raw, "oddam + garsonjera + ljubljana")
+        self.assertEqual(atom.raw, "ljubljana")
+
+    def test_two_missing_terms_is_not_a_near_miss(self):
+        m = matcher("oddam + garsonjera + ljubljana")
+        self.assertEqual(m.near_misses("Prodam kolo"), [])
+
+    def test_a_matching_post_is_not_a_near_miss(self):
+        m = matcher("oddam + soba")
+        self.assertEqual(m.near_misses("Oddam sobo"), [])
+
+    def test_single_term_rules_never_near_miss(self):
+        self.assertEqual(matcher("garsonjera").near_misses("Prodam kolo"), [])
+
+    def test_an_excluded_post_is_not_reported(self):
+        m = matcher("oddam + soba", "!agencija")
+        self.assertEqual(m.near_misses("Oddam preko agencija"), [])
+
+
 class TestGroupParsing(unittest.TestCase):
     def test_full_url(self):
         g = parse_group_line("https://www.facebook.com/groups/123456789")

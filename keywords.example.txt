@@ -6,11 +6,12 @@
 # "garsonjera" matches "garsonjero".  Short words stay literal.
 #
 #   stanovanje             matches stanovanja, stanovanju, stanovanje...
-#   oddam + ljubljana      AND: both parts must appear in the post
+#   oddam + soba           AND: both parts must appear in the post
 #   "oddam stanovanje"     exact phrase, no stemming
 #   =soba                  whole word only (won't match "posoda")
 #   re:\d{3,4}\s?(eur|€)   regular expression
 #   !agencija              EXCLUSION - skip any post containing this
+#   @lj                    ANY one of the terms defined by "@lj = a, b, c"
 #
 # With no trigger words at all, this person receives nothing (rather than
 # everything) - so a newly added user isn't buried under every post.
@@ -18,32 +19,45 @@
 # Test a line without touching Facebook:
 #   python main.py test-keywords "Oddam lepo sobo v Ljubljani, 400 EUR"
 
+# ---- where ---------------------------------------------------------------
+# Requiring the literal word "ljubljana" loses listings, because people name
+# the district instead: "Oddam sobo, Bezigrad" never says Ljubljana at all.
+# An alias matches ANY of its terms, so use "+ @lj" wherever you would have
+# written "+ ljubljana".  Add your own areas; delete the ones you'd not take.
+@lj = ljubljan, bezigrad, siska, trnovo, moste, sentvid, kodeljevo, fuzine, dravlje, koseze, vodmat, crnuce, stozice, jezica, zalog, rudnik, prule, krakovo, mirje, galjevica, kosese, "rozna dolina", "novo brdo", =vic, =vicu, =vica, =vicem, =center, =centru, =centra, =centrom, =btc
+
 # ---- what you're looking for --------------------------------------------
-oddam + stanovanje + ljubljana
-oddam + garsonjera + ljubljana
-oddajam + stanovanje + ljubljana
-najem + stanovanje + ljubljana
-garsonjera + ljubljana
-enosobno + ljubljana
-dvosobno + ljubljana
-"oddam stanovanje"
-"na voljo od"
+oddam + stanovanje + @lj
+oddam + soba + @lj
+oddam + garsonjera + @lj
+oddajam + stanovanje + @lj
+oddajam + soba + @lj
+najem + stanovanje + @lj
+garsonjera + @lj
+enosobno + @lj
+dvosobno + @lj
+# Most of the groups cover all of Slovenia, so keep the phrases location-scoped
+# too - otherwise "Oddam sobo v Mariboru" reaches you.  Drop the "+ @lj" if you
+# would rather see everything and filter by eye.
+"oddam stanovanje" + @lj
+"oddam sobo" + @lj
+"na voljo od" + @lj
 
 # ---- English-language groups --------------------------------------------
-# These groups are Ljubljana-only, so most rules here don't need "+ ljubljana"
+# These groups are Ljubljana-only, so most rules here don't need "+ @lj"
 # the way the Slovenia-wide groups above do.
 "room for rent"
 "apartment for rent"
 "flat for rent"
 "studio for rent"
 "rooms for rent"
-"for rent" + ljubljana
+"for rent" + @lj
 "available from"
 "renting out"
 "long term rental"
 "short term rental"
 sublet
-roommate + ljubljana
+roommate + @lj
 
 # ---- things that are never interesting ----------------------------------
 # Delete or edit these to taste.  Exclusions win over triggers.

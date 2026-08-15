@@ -79,15 +79,30 @@ def _substring_atom(token: str, needle: str) -> Atom:
 class Atom:
     """One condition inside a rule."""
 
-    kind: str  # substring | phrase | word | regex
+    kind: str  # substring | phrase | word | regex | any
     raw: str
     needle: str = ""
     pattern: re.Pattern[str] | None = None
+    # For an alias: any one of these satisfies the atom.  This is the only
+    # place OR lives - a Rule is still a plain AND over its atoms.
+    options: tuple = ()
 
     def matches(self, normalized_text: str) -> bool:
+        if self.options:
+            return any(option.matches(normalized_text) for option in self.options)
         if self.pattern is not None:
             return self.pattern.search(normalized_text) is not None
         return self.needle in normalized_text
+
+    def hit(self, normalized_text: str) -> str | None:
+        """Which term actually matched, for explaining a match back to the user."""
+        if self.options:
+            for option in self.options:
+                found = option.hit(normalized_text)
+                if found is not None:
+                    return found
+            return None
+        return self.raw if self.matches(normalized_text) else None
 
 
 @dataclass(frozen=True)
@@ -101,6 +116,25 @@ class Rule:
 
     def matches(self, normalized_text: str) -> bool:
         return bool(self.atoms) and all(a.matches(normalized_text) for a in self.atoms)
+
+    def explain(self, normalized_text: str) -> str:
+        """The rule as written, with each alias showing the term that hit.
+
+        `oddam + soba + @lj` becomes `oddam + soba + @lj→bezigrad`, so a reply
+        says *why* a post matched rather than leaving the alias opaque.  Rules
+        without aliases come back verbatim, so nothing downstream changes.
+        """
+        if not any(a.options for a in self.atoms):
+            return self.raw
+        parts = []
+        for atom in self.atoms:
+            found = atom.hit(normalized_text)
+            parts.append(f"{atom.raw}→{found}" if atom.options and found else atom.raw)
+        return " + ".join(parts)
+
+    def missing(self, normalized_text: str) -> tuple:
+        """The atoms that did not match - used to spot rules that are too tight."""
+        return tuple(a for a in self.atoms if not a.matches(normalized_text))
 
 
 @dataclass
@@ -122,10 +156,71 @@ class KeywordSyntaxError(ValueError):
     pass
 
 
-def _parse_atom(token: str) -> Atom:
+ALIAS_NAME_RE = re.compile(r"^@[a-z0-9_-]{1,32}$", re.I)
+_ALIAS_DEF_RE = re.compile(r"^(@[a-z0-9_-]{1,32})\s*=\s*(.+)$", re.I)
+
+
+def parse_alias(line: str) -> tuple[str, str] | None:
+    """Recognise `@name = a, b, c`.  Returns (name, the raw member list)."""
+    match = _ALIAS_DEF_RE.match(line.strip())
+    if not match:
+        return None
+    name, members = match.group(1).lower(), match.group(2).strip()
+    if not members:
+        raise KeywordSyntaxError(f"{name} is defined with nothing in it")
+    return name, members
+
+
+def _split_members(text: str) -> list[str]:
+    """Split on commas that are not inside quotes."""
+    members, current, quote = [], [], ""
+    for char in text:
+        if quote:
+            current.append(char)
+            if char == quote:
+                quote = ""
+        elif char in "\"'":
+            quote = char
+            current.append(char)
+        elif char == ",":
+            members.append("".join(current).strip())
+            current = []
+        else:
+            current.append(char)
+    members.append("".join(current).strip())
+    return [m for m in members if m]
+
+
+def build_alias(name: str, members: str) -> Atom:
+    """Turn a definition into one atom that any member satisfies."""
+    parts = _split_members(members)
+    if not parts:
+        raise KeywordSyntaxError(f"{name} is defined with nothing in it")
+    options = []
+    for part in parts:
+        if part.startswith("@"):
+            raise KeywordSyntaxError(
+                f"{name} refers to another alias ({part}); list the terms directly"
+            )
+        options.append(_parse_atom(part))
+    return Atom(kind="any", raw=name, options=tuple(options))
+
+
+def _parse_atom(token: str, aliases: dict | None = None) -> Atom:
     token = token.strip()
     if not token:
         raise KeywordSyntaxError("empty term")
+
+    if token.startswith("@"):
+        if not ALIAS_NAME_RE.match(token):
+            raise KeywordSyntaxError(f"{token!r} is not a usable alias name")
+        alias = (aliases or {}).get(token.lower())
+        if alias is None:
+            raise KeywordSyntaxError(
+                f"no alias called {token} - define it with "
+                f"'{token.lower()} = ljubljana, bezigrad, vic'"
+            )
+        return alias
 
     if token.lower().startswith("re:"):
         expr = token[3:].strip()
@@ -158,11 +253,13 @@ def _parse_atom(token: str) -> Atom:
     return _substring_atom(token, needle)
 
 
-def parse_rule(line: str, lineno: int = 0) -> Rule | None:
-    """Parse one keywords.txt line.  Returns None for blanks and comments."""
+def parse_rule(line: str, lineno: int = 0, aliases: dict | None = None) -> Rule | None:
+    """Parse one keywords.txt line.  Returns None for blanks, comments, aliases."""
     line = line.strip()
     if not line or line.startswith("#"):
         return None
+    if _ALIAS_DEF_RE.match(line):
+        return None  # a definition, not a rule; collected in the first pass
 
     exclude = False
     if line.startswith("!"):
@@ -171,7 +268,9 @@ def parse_rule(line: str, lineno: int = 0) -> Rule | None:
         if not line:
             raise KeywordSyntaxError("'!' with nothing to exclude")
 
-    atoms = tuple(_parse_atom(tok) for tok in _SPLIT_AND_RE.split(line) if tok.strip())
+    atoms = tuple(
+        _parse_atom(tok, aliases) for tok in _SPLIT_AND_RE.split(line) if tok.strip()
+    )
     if not atoms:
         raise KeywordSyntaxError(f"no usable terms in {line!r}")
     return Rule(raw=line, atoms=atoms, exclude=exclude, lineno=lineno)
@@ -180,9 +279,10 @@ def parse_rule(line: str, lineno: int = 0) -> Rule | None:
 class KeywordMatcher:
     """Holds the parsed rules and tests posts against them."""
 
-    def __init__(self, rules: list[Rule]):
+    def __init__(self, rules: list[Rule], aliases: dict | None = None):
         self.includes = [r for r in rules if not r.exclude]
         self.excludes = [r for r in rules if r.exclude]
+        self.aliases = aliases or {}
 
     @property
     def match_everything(self) -> bool:
@@ -194,15 +294,38 @@ class KeywordMatcher:
 
     @classmethod
     def from_lines(cls, lines) -> "KeywordMatcher":
+        """Two passes: collect the aliases, then parse the rules against them.
+
+        Order in the file does not matter, so the alias block can sit at the
+        bottom where it does not get in the way of the rules.
+        """
+        lines = list(lines)
+
+        aliases: dict[str, Atom] = {}
+        for lineno, raw in enumerate(lines, 1):
+            stripped = raw.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            try:
+                found = parse_alias(stripped)
+                if found is None:
+                    continue
+                name, members = found
+                if name in aliases:
+                    raise KeywordSyntaxError(f"{name} is defined more than once")
+                aliases[name] = build_alias(name, members)
+            except KeywordSyntaxError as exc:
+                raise KeywordSyntaxError(f"line {lineno}: {exc}") from exc
+
         rules = []
         for lineno, raw in enumerate(lines, 1):
             try:
-                rule = parse_rule(raw, lineno)
+                rule = parse_rule(raw, lineno, aliases)
             except KeywordSyntaxError as exc:
                 raise KeywordSyntaxError(f"line {lineno}: {exc}") from exc
             if rule:
                 rules.append(rule)
-        return cls(rules)
+        return cls(rules, aliases)
 
     @classmethod
     def from_file(cls, path: Path) -> "KeywordMatcher":
@@ -228,5 +351,28 @@ class KeywordMatcher:
         if self.match_everything:
             return MatchResult(matched=True)
 
-        hits = [rule.raw for rule in self.includes if rule.matches(normalized)]
+        hits = [
+            rule.explain(normalized) for rule in self.includes if rule.matches(normalized)
+        ]
         return MatchResult(matched=bool(hits), matched_rules=hits)
+
+    def near_misses(self, text: str) -> list[tuple[Rule, Atom]]:
+        """Rules that failed on exactly one term.
+
+        An over-tight rule fails silently - you never learn what you missed.
+        This is what makes that visible: `oddam + garsonjera + ljubljana` on a
+        post saying "Bezigrad" comes back as (rule, the `ljubljana` atom).
+        """
+        normalized = normalize(text)
+        for rule in self.excludes:
+            if rule.matches(normalized):
+                return []
+
+        out = []
+        for rule in self.includes:
+            if len(rule.atoms) < 2 or rule.matches(normalized):
+                continue
+            missing = rule.missing(normalized)
+            if len(missing) == 1:
+                out.append((rule, missing[0]))
+        return out

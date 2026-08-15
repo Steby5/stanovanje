@@ -134,7 +134,23 @@ rule and **no** `!` exclusion.
 | `"oddam stanovanje"` | that exact phrase only |
 | `=soba` | the whole word `soba` — not `posoda` |
 | `re:\d{3,4}\s?(eur\|€)` | a price like `450 EUR` or `500€` |
+| `@lj` | **any one** of the terms defined by `@lj = a, b, c` |
 | `!agencija` | **excludes** any post containing `agencija` |
+
+**Use an alias for places.** Requiring the literal word `ljubljana` loses
+listings, because people name the district: *"Oddam sobo, Bežigrad"* never says
+Ljubljana at all. Define the areas once and use it wherever you'd have written
+`+ ljubljana`:
+
+```
+@lj = ljubljan, bezigrad, siska, trnovo, moste, fuzine, =vic, =vicu, =center, =centru
+oddam + soba + @lj
+```
+
+Definition order doesn't matter, members keep their own syntax (`"phrase"`,
+`=word`, `re:...`), and aliases work in exclusions too. When a post matches, the
+reply names the member that hit — `oddam + soba + @lj→bezigrad` — so you can see
+*why*.
 
 Matching ignores case and diacritics, so `zelim` matches "Želim" and `ISCEM`
 matches "iščem".
