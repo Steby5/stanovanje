@@ -379,8 +379,19 @@ class FacebookScraper:
         for key in ("multi_permalink_id", "story_fbid"):
             if key in params:
                 return f"{group.url}/posts/{params[key][0]}/"
-        # Unknown shape: keep the path, drop the query string.
-        return f"https://www.facebook.com{parsed.path}" if parsed.path else href
+
+        # Some shapes carry the id only in the query - photo.php?fbid=…,
+        # watch/?v=… - so dropping the query leaves a bare, dead path like
+        # https://www.facebook.com/photo.php.  That is worse than no link at
+        # all, because the caller's `permalink or group.url` fallback sees a
+        # truthy value and keeps it.  Keep the identifying parameter.
+        for key in ("fbid", "v"):
+            if key in params and parsed.path:
+                return f"https://www.facebook.com{parsed.path}?{key}={params[key][0]}"
+        if not parsed.path or parsed.path == "/":
+            return ""  # nothing usable; let the caller fall back to the group
+
+        return f"https://www.facebook.com{parsed.path}"
 
     # -- debugging ------------------------------------------------------
     def dump(self, group: Group, out_dir: Path) -> dict:

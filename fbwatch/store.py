@@ -8,13 +8,33 @@ backlog at them, and a failed delivery to one doesn't affect the other.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import time
 from pathlib import Path
 
+log = logging.getLogger(__name__)
+
 SCHEMA_VERSION = 2
 MAX_IDS_PER_GROUP = 4000
+
+
+def _replace_with_retry(tmp: Path, target: Path, attempts: int = 3) -> None:
+    """os.replace, retried briefly.
+
+    On Windows an antivirus scanner or the search indexer can hold the
+    destination open for a moment, which surfaces as PermissionError on an
+    otherwise fine write.
+    """
+    for attempt in range(attempts):
+        try:
+            os.replace(tmp, target)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(0.1 * (attempt + 1))
 
 
 class SeenStore:
@@ -130,13 +150,22 @@ class SeenStore:
                 self._dirty = True
         return removed
 
-    def save(self, force: bool = False) -> None:
-        """Atomic write, so a crash mid-save cannot corrupt the state file."""
+    def save(self, force: bool = False) -> bool:
+        """Write the state file.  Returns True when something was written.
+
+        The whole operation is under the lock, including the write.  Both the
+        watch loop and the Discord control thread call this, and with the write
+        outside the lock they raced on one temp filename: `os.replace` could
+        fail outright on Windows, and the older payload could land last while
+        `_dirty` was already cleared, so it was never rewritten - which shows up
+        as already-notified posts arriving again after a restart.
+
+        `_dirty` is cleared only once the file is actually in place, so a failed
+        write is retried on the next cycle rather than silently discarded.
+        """
         with self._lock:
             if not (self._dirty or force):
-                return
-            # Serialise inside the lock: a command removing a subscriber while
-            # this walked the structure would raise mid-write.
+                return False
             payload = json.dumps(
                 {
                     "version": SCHEMA_VERSION,
@@ -145,12 +174,28 @@ class SeenStore:
                 },
                 indent=1,
             )
-            self._dirty = False
 
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-        tmp.write_text(payload, encoding="utf-8")
-        os.replace(tmp, self.path)
+            # A unique temp name, so two savers can never share one.
+            tmp = self.path.with_suffix(
+                f"{self.path.suffix}.{os.getpid()}.{threading.get_ident()}.tmp"
+            )
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                tmp.write_text(payload, encoding="utf-8")
+                _replace_with_retry(tmp, self.path)
+            except OSError as exc:
+                # Disk full, permissions, an antivirus holding the destination.
+                # Leave _dirty set so the next save tries again, and never let
+                # this kill the watch loop.
+                log.error("Could not write %s: %s", self.path, exc)
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                return False
+
+            self._dirty = False
+            return True
 
 
 def _clean_groups(raw: dict) -> dict[str, dict[str, float]]:

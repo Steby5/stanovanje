@@ -91,7 +91,10 @@ class DiscordNotifier:
             embed["image"] = {"url": post.images[0]}
 
         embed["footer"] = {"text": truncate(post.group_name or "Facebook group", 100)}
-        embed["timestamp"] = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
+        # Deliberately no embed["timestamp"]: it was set to *now*, and Discord
+        # renders that as the post's own time - so a three-day-old listing read
+        # as "Today at 14:32".  For a market where an hour matters, telling the
+        # reader a stale listing is fresh is worse than telling them nothing.
         return embed
 
     def build_shared_embed(self, post: Post, recipients: list[tuple]) -> dict:
@@ -151,10 +154,12 @@ class DiscordNotifier:
             "allowed_mentions": {"parse": [], "users": mention_ids},
         })
 
-    def send_text(self, message: str) -> bool:
+    def send_text(self, message: str, attempts: int = 4) -> bool:
+        """Send a plain message.  `attempts` is lowered for operational alerts,
+        which should not stall the watch loop for a minute during an outage."""
         if not self.enabled:
             return False
-        return self._post({"content": truncate(message, 1900)})
+        return self._post({"content": truncate(message, 1900)}, attempts=attempts)
 
     # -- transport (overridden to post as the bot instead) ---------------
     @property

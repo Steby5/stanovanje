@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import signal
 import sys
 from pathlib import Path
 
@@ -211,7 +212,29 @@ def cmd_run(cfg: Config, args) -> int:
     watcher.reload_inputs()
     if not require_recipients(watcher):
         return 1
+    _stop_on_signals(watcher)
     return watcher.run_forever()
+
+
+def _stop_on_signals(watcher: Watcher) -> None:
+    """Shut down cleanly on SIGTERM, not just Ctrl-C.
+
+    `systemctl restart` sends SIGTERM, and Python's default handler exits
+    without unwinding - so the watch loop's `finally` never ran and the last
+    cycle's post ids were never saved. Every routine restart then re-notified
+    everything it had just delivered.
+    """
+    def handler(signum, _frame):
+        watcher.request_stop(f"received {signal.Signals(signum).name}")
+
+    for name in ("SIGTERM", "SIGINT", "SIGHUP"):
+        sig = getattr(signal, name, None)
+        if sig is None:
+            continue  # SIGHUP does not exist on Windows
+        try:
+            signal.signal(sig, handler)
+        except (ValueError, OSError):
+            pass  # not on the main thread, or not settable on this platform
 
 
 def cmd_seed(cfg: Config, args) -> int:

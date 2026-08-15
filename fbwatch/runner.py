@@ -12,10 +12,11 @@ import requests
 from .control import DiscordControl
 from .delivery import Dispatcher
 from .facebook import BrowserUnavailable, FacebookScraper, LoginRequired, ScrapeError
+from .matcher import KeywordSyntaxError
 from .models import Group, Post, load_groups
 from .notify import DiscordNotifier
 from .store import SeenStore
-from .subscribers import Subscriber, load_subscribers
+from .subscribers import Subscriber, SubscriberError, load_subscribers
 
 log = logging.getLogger(__name__)
 
@@ -24,13 +25,22 @@ ERROR_ALERT_THRESHOLD = 3
 
 
 class Watcher:
-    def __init__(self, cfg, notifier: DiscordNotifier | None = None, dispatcher_factory=None):
+    def __init__(
+        self,
+        cfg,
+        notifier: DiscordNotifier | None = None,
+        dispatcher_factory=None,
+        scraper_factory=None,
+    ):
         self.cfg = cfg
         # Admin channel: where operational warnings go, separate from the
         # per-subscriber notification routing.
         self.notifier = notifier or DiscordNotifier(cfg)
         # Overridable so tests (and any future transport) can swap delivery out.
         self._dispatcher_factory = dispatcher_factory or Dispatcher
+        # Same seam for the browser: run_forever used to build one inline, which
+        # is why none of the failure handling in it could be tested.
+        self._scraper_factory = scraper_factory or FacebookScraper
         self.store = SeenStore(cfg.state_path, cfg.state_retention_days)
         self.groups: list[Group] = []
         self.subscribers: list[Subscriber] = []
@@ -39,6 +49,7 @@ class Watcher:
         self._consecutive_failures = 0
         self._alerted = False
         self._adopted_legacy = False
+        self._config_broken = False
         # Commands run on their own thread so they are answered while a scrape
         # is in progress.  This guards the state both threads touch; the store
         # guards itself.  Never held across a browser call or an HTTP send.
@@ -174,8 +185,35 @@ class Watcher:
         return totals
 
     # -- one cycle -------------------------------------------------------
+    def _safe_reload(self) -> None:
+        """Re-read the config files, surviving a broken one.
+
+        A typo in keywords.txt or a hand-edited subscribers.json used to raise
+        straight out of the watch loop and kill the daemon - which flatly
+        contradicts "edit them while the watcher is running", and is reachable
+        from Discord, since commands write to disk before the reload validates.
+
+        reload_inputs builds everything before swapping it in, so a failure
+        leaves the previous good configuration in place and we simply carry on
+        with it.
+        """
+        try:
+            self.reload_inputs()
+        except (ValueError, KeywordSyntaxError, SubscriberError, FileNotFoundError) as exc:
+            if not self._config_broken:
+                self._config_broken = True
+                log.error("Could not reload the configuration: %s", exc)
+                log.error("Carrying on with the last good settings; fix the file to apply changes.")
+                self._alert(f"fbwatch cannot read its configuration: {exc}. Still running on the "
+                            "previous settings - changes will not apply until it is fixed.")
+            return
+        if self._config_broken:
+            self._config_broken = False
+            log.info("Configuration is readable again.")
+            self._alert("fbwatch configuration is readable again.")
+
     def run_cycle(self, scraper, notify: bool = True) -> dict:
-        self.reload_inputs()
+        self._safe_reload()
         totals = {"seen": 0, "new": 0, "matched": 0, "sent": 0, "errors": 0}
 
         idle = [s for s in self.subscribers if s.enabled and not s.deliverable]
@@ -210,8 +248,21 @@ class Watcher:
         return totals
 
     # -- forever ---------------------------------------------------------
-    def run_forever(self) -> int:
-        """Poll on an interval until interrupted.  Returns a process exit code."""
+    def request_stop(self, reason: str = "") -> None:
+        """Ask the watch loop to finish and shut down cleanly.
+
+        systemd sends SIGTERM on `systemctl restart`, and Python's default
+        handler kills the interpreter without running the loop's `finally` -
+        so the state file was never saved and every routine restart re-notified
+        the last cycle's posts.  The signal handler calls this instead.
+        """
+        if reason:
+            log.info("Stopping: %s", reason)
+        self._stopping.set()
+        self._wake.set()
+
+    def run_forever(self, max_cycles: int | None = None) -> int:
+        """Poll on an interval until stopped.  Returns a process exit code."""
         self.reload_inputs()
         active = self.active_subscribers
         log.info(
@@ -239,9 +290,9 @@ class Watcher:
             log.warning("Discord control is configured but not usable - see the log above.")
 
         cycle = 0
-        scraper: FacebookScraper | None = None
+        scraper = None
         try:
-            while True:
+            while not self._stopping.is_set():
                 cycle += 1
                 # Recycling the browser periodically keeps memory flat on long runs.
                 if scraper and cycle > 1 and (cycle - 1) % self.cfg.restart_browser_every_cycles == 0:
@@ -249,7 +300,7 @@ class Watcher:
                     scraper.stop()
                     scraper = None
                 if scraper is None:
-                    scraper = FacebookScraper(self.cfg)
+                    scraper = self._scraper_factory(self.cfg)
                     try:
                         scraper.start()
                     except BrowserUnavailable as exc:
@@ -281,12 +332,18 @@ class Watcher:
                 self.store.prune()
                 self.store.save()
 
+                # Checked here rather than at the top of the loop, so a bounded
+                # run does not sit through a poll interval it will never use.
+                if max_cycles is not None and cycle >= max_cycles:
+                    return 0
+
                 wait = self.cfg.poll_interval_seconds + random.uniform(0, self.cfg.jitter_seconds)
                 log.info(
                     "cycle %d done (%d new, %d matched, %d sent); next in %ds",
                     cycle, totals["new"], totals["matched"], totals["sent"], int(wait),
                 )
                 self._wait(wait)
+            return 0
         except KeyboardInterrupt:
             log.info("Stopped.")
             return 0
@@ -294,6 +351,8 @@ class Watcher:
             self.stop_control_thread()
             if scraper:
                 scraper.stop()
+            # Always the last thing: this is what stops a restart re-notifying
+            # everything the final cycle already delivered.
             self.store.save()
 
     def _warn_if_admin_unclaimed(self) -> None:
@@ -362,12 +421,15 @@ class Watcher:
     def _note_failure(self, count: int) -> None:
         self._consecutive_failures += 1
         if self._consecutive_failures >= ERROR_ALERT_THRESHOLD and not self._alerted:
-            self._alert(
+            # Latch only on a *successful* send.  A network outage is exactly
+            # when this alert matters and exactly when the send fails, so
+            # latching regardless meant the one message you needed was dropped
+            # and never retried.
+            self._alerted = self._alert(
                 f"fbwatch has failed to read any group for "
                 f"{self._consecutive_failures} cycles in a row ({count} error(s) last cycle). "
                 f"Check {self.cfg.log_path.name}."
             )
-            self._alerted = True
 
     def _note_success(self) -> None:
         if self._alerted:
@@ -375,6 +437,25 @@ class Watcher:
         self._consecutive_failures = 0
         self._alerted = False
 
-    def _alert(self, message: str) -> None:
-        if self.cfg.notify_errors and self.notifier.enabled:
-            self.notifier.send_text(f":warning: {message}")
+    def _alert(self, message: str) -> bool:
+        """Tell the operator something is wrong.  Returns whether it got through.
+
+        Falls back to the control channel when no webhook is configured - the
+        README now says webhooks are optional if you use the bot, and in that
+        setup every operational alert was being discarded in silence.
+        """
+        if not self.cfg.notify_errors:
+            return False
+
+        text = f":warning: {message}"
+        # One attempt, not four: an outage should cost seconds of the watch
+        # loop, not the ~75s that four backed-off retries take.
+        if self.notifier.enabled and self.notifier.send_text(text, attempts=1):
+            return True
+        if self.control is not None and self.control.enabled:
+            try:
+                self.control.reply(text)
+                return True
+            except Exception as exc:  # noqa: BLE001 - alerting must never raise
+                log.debug("Could not alert via the control channel: %s", exc)
+        return False

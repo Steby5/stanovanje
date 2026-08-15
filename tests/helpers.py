@@ -29,16 +29,50 @@ def make_post(pid: str, text: str, group: Group | None = None) -> Post:
 
 
 class StubScraper:
-    """Stands in for FacebookScraper; returns whatever posts the test sets."""
+    """Stands in for FacebookScraper.
 
-    def __init__(self, posts: list[Post]):
-        self.posts = posts
+    Also usable as a `scraper_factory` for `Watcher.run_forever` (wrap it with
+    `stub_scraper`), so the failure handling in the watch loop is reachable
+    from tests at all.  `per_group` maps a group slug to a list of posts or to
+    an exception to raise, which is how "5 of 6 groups are broken" is set up.
+    """
+
+    def __init__(self, posts=None, per_group=None, logged_in=True):
+        self.posts = posts or []
+        self.per_group = per_group or {}
+        self.logged_in = logged_in
         self.calls = 0
         self.idle_calls = 0
+        self.starts = 0
+        self.stops = 0
+
+    # -- lifecycle, so it can stand in for the real scraper ---------------
+    def start(self):
+        self.starts += 1
+
+    def stop(self):
+        self.stops += 1
+
+    def is_logged_in(self):
+        return self.logged_in
 
     def scrape_group(self, group, limit=None):
         self.calls += 1
+        if group.slug in self.per_group:
+            outcome = self.per_group[group.slug]
+            if isinstance(outcome, Exception):
+                raise outcome
+            return list(outcome)
         return list(self.posts)
+
+
+def stub_scraper(scraper):
+    """Adapt a StubScraper into a scraper_factory for Watcher."""
+
+    def factory(cfg, *args, **kwargs):
+        return scraper
+
+    return factory
 
 
 class StubNotifier(DiscordNotifier):
