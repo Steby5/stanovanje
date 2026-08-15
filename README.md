@@ -18,6 +18,10 @@ groups are 90% noise.
   their own destination. Facebook is still scraped once per cycle.
 - Configurable **from Discord** — add trigger words from your phone.
 
+**Using the bot rather than setting it up?** The day-to-day command reference —
+writing trigger words, cutting noise, why you might not be getting anything — is
+in **[USAGE.md](USAGE.md)**.
+
 > **Personal-use tool.** It drives a real logged-in browser at a deliberately
 > gentle pace to read groups you are already a member of. Automated access is
 > against Facebook's terms of service; you use it on your own account at your own
