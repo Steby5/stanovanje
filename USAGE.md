@@ -12,7 +12,7 @@ Every command starts with `!fbw` and is typed in the control channel.
 Just say what you're looking for:
 
 ```
-!fbw add oddam + soba + ljubljana
+!fbw add oddam + soba + @lj
 ```
 
 That subscribes you on the spot — no one has to set you up first — and your
@@ -144,6 +144,7 @@ a glance that this one isn't yours.
 | `"oddam stanovanje"` | that exact phrase, nothing else |
 | `=soba` | the whole word `soba` — not `posoda`, not `sobota` |
 | `re:\d{3,4}\s?(eur\|€)` | a price like `450 EUR` or `500€` |
+| `@lj` | **any one** of the places listed in `keywords.txt` — Ljubljana, Bežigrad, Vič… |
 
 Case and accents never matter: `zelim` finds "Želim", `ISCEM` finds "iščem".
 
@@ -164,20 +165,27 @@ need the exact form, use `=soba` or `"soba"`.
 you never learn what you missed. A rule that's too broad announces itself
 immediately, and you fix it with `exclude`.
 
-**And check what you nearly caught.** `!fbw misses rules` lists the posts that
-failed one of your rules by a single term, grouped by which term did it:
+```
+!fbw add oddam + @lj              ← broad
+!fbw exclude iscem                ← then cut the people looking, not offering
+!fbw exclude agencija
+```
+
+**Name places with `@lj`, not "ljubljana".** People write the district, so a rule
+demanding the city name misses *"Oddam sobo, Bežigrad"* entirely. `@lj` matches
+any of the areas listed in `keywords.txt` — Ljubljana itself, Bežigrad, Vič,
+Šiška, the centre and so on.
+
+**And check what you nearly caught.** `!fbw misses rules` lists posts that failed
+one of your rules by a single term, grouped by which term did it:
 
 ```
 · `oddam + soba + ljubljana` — missing `ljubljana` — 4 post(s)
 ```
 
-That is a rule to widen — usually by swapping the term for an alias like `@lj`.
-
-```
-!fbw add oddam + ljubljana        ← broad
-!fbw exclude iscem                ← then cut the people looking, not offering
-!fbw exclude agencija
-```
+That's a rule to widen. It's the only way to find a rule that is quietly costing
+you listings, because a rule that matches nothing looks exactly like a quiet
+market.
 
 **Combine with `+` rather than writing long phrases.** `oddam + soba` catches
 "Oddam sobo", "oddam prosto sobo", "sobo oddam" and "Oddam v najem sobo".
@@ -188,7 +196,7 @@ English-language groups. If you're subscribed to those, add English rules too:
 
 ```
 !fbw add "room for rent"
-!fbw add "for rent" + ljubljana
+!fbw add "for rent" + @lj
 !fbw add sublet
 ```
 
@@ -200,8 +208,8 @@ first-person forms like `"i am looking for"`.
 
 | Goal | Rule |
 |---|---|
-| Any room offered in Ljubljana | `oddam + soba + ljubljana` |
-| A studio, any wording | `garsonjera` |
+| Any room offered in Ljubljana or its districts | `oddam + soba + @lj` |
+| A studio, any wording | `garsonjera + @lj` |
 | One- or two-room flats | `enosobno` and `dvosobno` |
 | Anything with a move-in date | `"na voljo od"` |
 | Under 500 € | `re:[1-4]\d{2}\s?(eur\|€)` |
