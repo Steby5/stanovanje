@@ -62,7 +62,15 @@
 
   <div aria-posinset="31">
     <div><span data-ad-rendering-role="profile_name"><a href="/groups/555000/user/61591189302748/">Boris Banjanin</a></span></div>
-    <a role="link" href="?__cft__[0]=AZbSvBg8Xxwu" aria-label="Tuesday, August 11, 2026 at 10:25 PM"><span>3d</span></a>
+    <!--
+      The real timestamp shape: the anchor carries no path and no aria-label,
+      and the characters live in a <text> node OUTSIDE the post (see the
+      sprite sheet at the bottom of this file). The post also carries a second
+      sprite from a link preview, so taking the *first* one would read
+      "Learn More" as the time.
+    -->
+    <a role="link" href="?__cft__[0]=AZbSvBg8Xxwu"><span><svg><use xlink:href="#SvgT129"></use></svg></span></a>
+    <div><a role="link" href="?__cft__[0]=AZbSvBg8Xxwu"><span><svg><use xlink:href="#SvgLearn"></use></svg></span></a></div>
     <div data-ad-rendering-role="story_message">
       <div dir="auto">Iščem enoposteljno sobo v Ljubljani za sina.</div>
     </div>
@@ -79,10 +87,23 @@
 
   <div aria-posinset="32">
     <div><span data-ad-rendering-role="profile_name">Anonymous participant</span></div>
+    <a role="link" href="?__cft__[0]=AZawrf7N"><span><svg><use xlink:href="#SvgT143"></use></svg></span></a>
     <div data-ad-rendering-role="story_message">
       <div dir="auto">Oddam garsonjero v Šiški, 450 EUR.</div>
     </div>
   </div>
+</div>
+
+<!--
+  Facebook's sprite sheet: rendered once, outside every post, and referenced by
+  id. Nothing scoped to a post's own subtree can reach these strings.
+-->
+<div class="__fb-dark-mode">
+  <svg>
+    <text id="SvgT129">3 days ago</text>
+    <text id="SvgT143">July 22 at 3:41 PM</text>
+    <text id="SvgLearn">Learn More</text>
+  </svg>
 </div>
 
 </body>

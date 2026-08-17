@@ -15,6 +15,7 @@ import requests
 
 from .matcher import MatchResult
 from .models import Post
+from .postdate import describe_age
 from .textutil import truncate
 
 log = logging.getLogger(__name__)
@@ -56,8 +57,9 @@ class TelegramNotifier:
         if result.matched_rules:
             lines.append("")
             lines.append(f"<i>Matched: {_esc(', '.join(result.matched_rules))}</i>")
-        if post.timestamp:
-            lines.append(f"<i>Posted: {_esc(post.timestamp)}</i>")
+        age = describe_age(post.posted_at)
+        if age or post.timestamp:
+            lines.append(f"<i>Posted: {_esc(age or post.timestamp)}</i>")
         if post.url:
             lines.append("")
             lines.append(f'<a href="{_esc(post.url)}">Open post on Facebook</a>')

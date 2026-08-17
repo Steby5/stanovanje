@@ -24,6 +24,7 @@ from .extract_js import (
     SEE_MORE_LABELS,
 )
 from .models import Group, Post, make_post_id
+from .postdate import parse_posted_at
 
 log = logging.getLogger(__name__)
 
@@ -292,6 +293,7 @@ class FacebookScraper:
                     author=author,
                     author_url=(item.get("author_url") or "").strip(),
                     timestamp=(item.get("timestamp") or "").strip(),
+                    posted_at=parse_posted_at(item.get("timestamp") or ""),
                     images=list(item.get("images") or []),
                     group=group,
                     text_source=item.get("text_source", "selector"),

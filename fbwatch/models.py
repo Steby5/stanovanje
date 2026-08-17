@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from .textutil import clean
@@ -41,7 +42,8 @@ class Post:
     text: str
     author: str = ""
     author_url: str = ""
-    timestamp: str = ""
+    timestamp: str = ""            # as Facebook wrote it
+    posted_at: datetime | None = None  # parsed, None when unknown
     images: list[str] = field(default_factory=list)
     group: Group | None = None
     text_source: str = "selector"  # or "fallback", for debugging

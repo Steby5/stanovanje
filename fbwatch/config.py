@@ -59,6 +59,10 @@ class Config:
     # for barely more posts.  Raise it if the watcher is often stopped for
     # hours, since it only sees as far back as this on the first poll after.
     posts_per_group: int = 8
+    # Don't notify about listings older than this.  Stops an overnight
+    # restart replaying a burst of stale posts as if they were fresh.
+    # 0 disables the cut.  Posts whose age cannot be read are never cut.
+    max_post_age_hours: int = 12
     notify_on_first_run: bool = False
     restart_browser_every_cycles: int = 24
 

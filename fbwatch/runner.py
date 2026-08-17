@@ -6,6 +6,7 @@ import logging
 import random
 import threading
 import time
+from datetime import datetime, timedelta
 
 import requests
 
@@ -118,8 +119,13 @@ class Watcher:
         # record it but stay quiet, per subscriber rather than per group.
         first_time = {s.name: not self.store.knows_group(s.name, group.slug) for s in watchers}
         seeded = {s.name: 0 for s in watchers}
+        stale = {s.name: 0 for s in watchers}
+        cutoff = None
+        if self.cfg.max_post_age_hours:
+            cutoff = datetime.now() - timedelta(hours=self.cfg.max_post_age_hours)
 
         for post in reversed(posts):
+            too_old = bool(cutoff and post.posted_at and post.posted_at < cutoff)
             # Deciding who gets this post touches the shared state, so it runs
             # under the lock - but only for microseconds.  Delivery is HTTP and
             # is deliberately left outside it, or a batch of notifications
@@ -137,6 +143,13 @@ class Watcher:
 
                     if first_time[sub.name] and not self.cfg.notify_on_first_run:
                         seeded[sub.name] += 1
+                        continue
+
+                    # Recorded above, so an old post is never reconsidered.
+                    # Only cut when the age is actually known - an unreadable
+                    # timestamp must not be mistaken for a stale post.
+                    if too_old:
+                        stale[sub.name] += 1
                         continue
 
                     result = sub.matcher.match(post.text)
@@ -178,6 +191,12 @@ class Watcher:
                 log.info(
                     "%s/%s: first poll, recorded %d existing post(s) without notifying",
                     name, group.name, count,
+                )
+        for name, count in stale.items():
+            if count:
+                log.info(
+                    "%s/%s: skipped %d post(s) older than %dh",
+                    name, group.name, count, self.cfg.max_post_age_hours,
                 )
 
         if notify:

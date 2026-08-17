@@ -540,6 +540,7 @@ The ones you're most likely to touch:
 | `poll_interval_seconds` | `300` | How often to check (minimum 60) |
 | `posts_per_group` | `15` | How far down each feed to read |
 | `notify_on_first_run` | `false` | Set `true` to be notified about the existing backlog too |
+| `max_post_age_hours` | `12` | Skip listings older than this. `0` disables it; posts whose age can't be read are never skipped |
 | `headless` | `true` | Set `false` to watch the browser work |
 | `include_images` | `true` | Put the post's first photo in the embed |
 | `notify_errors` | `true` | Warn on Discord if the session dies |

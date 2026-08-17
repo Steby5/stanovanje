@@ -9,6 +9,7 @@ import requests
 
 from .matcher import MatchResult
 from .models import Post
+from .postdate import describe_age
 from .textutil import truncate
 
 log = logging.getLogger(__name__)
@@ -77,9 +78,10 @@ class DiscordNotifier:
             embed["fields"].append(
                 {"name": "Link", "value": f"[Open post]({post.url})", "inline": True}
             )
-        if post.timestamp:
+        age = describe_age(post.posted_at)
+        if age or post.timestamp:
             embed["fields"].append(
-                {"name": "Posted", "value": truncate(post.timestamp, 100), "inline": True}
+                {"name": "Posted", "value": truncate(age or post.timestamp, 100), "inline": True}
             )
 
         if post.author and post.author_url:
@@ -91,10 +93,13 @@ class DiscordNotifier:
             embed["image"] = {"url": post.images[0]}
 
         embed["footer"] = {"text": truncate(post.group_name or "Facebook group", 100)}
-        # Deliberately no embed["timestamp"]: it was set to *now*, and Discord
-        # renders that as the post's own time - so a three-day-old listing read
-        # as "Today at 14:32".  For a market where an hour matters, telling the
-        # reader a stale listing is fresh is worse than telling them nothing.
+        # Only ever the *post's* time.  This used to be set to `now`, which
+        # Discord renders as the post's own - so a three-day-old listing read
+        # "Today at 14:32".  When the age is unknown the field stays absent,
+        # because telling the reader a stale listing is fresh is worse than
+        # telling them nothing.
+        if post.posted_at:
+            embed["timestamp"] = post.posted_at.astimezone().isoformat()
         return embed
 
     def build_shared_embed(self, post: Post, recipients: list[tuple]) -> dict:

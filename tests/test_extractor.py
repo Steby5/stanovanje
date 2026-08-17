@@ -120,8 +120,17 @@ class TestExtractor(unittest.TestCase):
             "https://scontent.xx.fbcdn.net/v/p60x60/commenter.jpg", post["images"]
         )
 
-    def test_the_timestamp_comes_from_the_aria_label(self):
-        self.assertIn("August 11, 2026", self.posts[3]["timestamp"])
+    def test_the_timestamp_is_resolved_through_the_svg_sprite(self):
+        # The characters live outside the post, referenced by <use>; nothing
+        # scoped to the post's own subtree can see them.
+        self.assertEqual(self.posts[3]["timestamp"], "3 days ago")
+
+    def test_a_second_sprite_is_not_mistaken_for_the_time(self):
+        # The same post carries a "Learn More" sprite from a link preview.
+        self.assertNotIn("Learn", self.posts[3]["timestamp"])
+
+    def test_an_absolute_date_sprite_is_read_too(self):
+        self.assertIn("July 22", self.posts[4]["timestamp"])
 
     def test_a_comment_link_yields_the_parent_post_permalink(self):
         # The post's own anchor has no path, but an inline comment's does; the

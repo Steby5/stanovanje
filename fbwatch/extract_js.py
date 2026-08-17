@@ -102,7 +102,32 @@ EXTRACT_POSTS_JS = r"""
     return '';
   }
 
+  // Looks like something a clock would say.  Deliberately loose - Python does
+  // the real parsing - but tight enough to tell "3 days ago" from "Learn More".
+  const LOOKS_LIKE_TIME = /^(?:\d{1,3}\s*[a-z]{0,8}(?:\s+ago)?|(?:just now|now|pravkar|zdaj)|(?:yesterday|v[cč]eraj)\b.*|(?:pred\s+\d+\s+\w+)|[a-z]{3,12}\s+\d{1,2}(?:,\s*\d{4})?\s+(?:at|ob)\s+\d{1,2}:\d{2}.*|\d{1,2}\.\s*[a-z]{3,12}.*\d{1,2}:\d{2}.*)$/i;
+
+  function spriteTexts(post) {
+    // Facebook renders the post age as an SVG sprite: a <use> pointing at a
+    // <text id="..."> that lives OUTSIDE the post, so no amount of searching
+    // within the post will find the characters.  Follow the reference.
+    const out = [];
+    for (const use of post.querySelectorAll('use')) {
+      const ref = use.getAttribute('xlink:href') || use.getAttribute('href') || '';
+      if (!ref.startsWith('#')) continue;
+      const target = document.getElementById(ref.slice(1));
+      if (!target) continue;
+      const text = norm(target.textContent);
+      if (text) out.push(text);
+    }
+    return out;
+  }
+
   function pickTimestamp(post) {
+    // A post can carry more than one sprite - a link preview adds a "Learn
+    // More" button - so take the first that reads like a time, not the first.
+    for (const text of spriteTexts(post)) {
+      if (text.length <= 40 && LOOKS_LIKE_TIME.test(text)) return text;
+    }
     for (const a of post.querySelectorAll('a[role="link"], a[href], abbr')) {
       const label = a.getAttribute('aria-label') || '';
       if (/\d{4}/.test(label) && /\d/.test(label)) return norm(label);

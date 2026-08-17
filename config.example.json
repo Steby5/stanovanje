@@ -27,6 +27,8 @@
   "min_delay_between_groups": 6,
   "max_delay_between_groups": 20,
   "posts_per_group": 8,
+  "_comment_age": "Do not notify about listings older than this many hours. Stops an overnight restart replaying stale posts as if they were fresh. 0 turns the cut off; posts whose age cannot be read are never cut.",
+  "max_post_age_hours": 12,
   "notify_on_first_run": false,
   "restart_browser_every_cycles": 24,
 
