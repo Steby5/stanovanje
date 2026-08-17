@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import collections
 import logging
 import random
 import threading
@@ -70,6 +71,9 @@ class Watcher:
         self.total_sent = 0
         self.started_at = time.time()
         self.last_cycle_at: float | None = None
+        # Posts that failed a rule by one term - see _record_near_misses.
+        # Bounded, because it is only ever a diagnostic.
+        self.near_misses = collections.deque(maxlen=300)
         self.control = None
 
     # -- inputs ---------------------------------------------------------
@@ -160,6 +164,7 @@ class Watcher:
                     result = sub.matcher.match(post.text)
                     if not result.matched:
                         log.debug("%s: skip %s (%s)", sub.name, post.url, result.reason)
+                        self._record_near_misses(sub, group, post)
                         continue
                     totals["matched"] += 1
 
@@ -456,6 +461,23 @@ class Watcher:
             self._wake.clear()
 
     # -- error reporting -------------------------------------------------
+    def _record_near_misses(self, sub: Subscriber, group: Group, post: Post) -> None:
+        """Remember posts that failed a rule by a single term.
+
+        An over-tight rule fails silently - you never find out what it cost
+        you. This is the record that makes it visible; `!fbw misses` reads it.
+        """
+        for rule, atom in sub.matcher.near_misses(post.text):
+            self.near_misses.append({
+                "when": time.time(),
+                "subscriber": sub.name,
+                "group": group.name,
+                "rule": rule.raw,
+                "missing": atom.raw,
+                "text": " ".join(post.text.split())[:160],
+                "url": post.url,
+            })
+
     def _record_group_outcome(self, group: Group, outcome: str) -> None:
         """Count consecutive bad cycles per group.
 

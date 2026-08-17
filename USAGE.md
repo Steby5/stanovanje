@@ -112,6 +112,7 @@ matches everything else you asked for.
 
 | Command | What it does |
 |---|---|
+| `!fbw misses` | Posts that missed one of your rules by a single term |
 | `!fbw channel <id>` / `here` | Send your listings elsewhere, or back to this channel |
 | `!fbw mention off` / `on` | Receive listings without being pinged |
 | `!fbw status` | Is the watcher running, how many cycles, when it last checked |
@@ -162,6 +163,15 @@ need the exact form, use `=soba` or `"soba"`.
 **Start with one broad rule, then cut.** A rule that's too narrow fails silently —
 you never learn what you missed. A rule that's too broad announces itself
 immediately, and you fix it with `exclude`.
+
+**And check what you nearly caught.** `!fbw misses rules` lists the posts that
+failed one of your rules by a single term, grouped by which term did it:
+
+```
+· `oddam + soba + ljubljana` — missing `ljubljana` — 4 post(s)
+```
+
+That is a rule to widen — usually by swapping the term for an alias like `@lj`.
 
 ```
 !fbw add oddam + ljubljana        ← broad

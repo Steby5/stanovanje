@@ -387,6 +387,51 @@ class TestStoreUnderConcurrency(SharedServerTestCase):
         self.assertTrue(store.has("writer", "555000", "p299"))
 
 
+class TestNearMissCommand(SharedServerTestCase):
+    """`!fbw misses` — the cure for a rule that is silently too tight."""
+
+    def setUp(self):
+        super().setUp()
+        # A rule that will miss "Bezigrad" listings by exactly one term.
+        (self.base / "keywords.txt").write_text(
+            "oddam + soba + ljubljana\n", encoding="utf-8"
+        )
+        self.watcher.reload_inputs()
+
+    def feed(self, *texts):
+        posts = [make_post(str(i), t, GROUP) for i, t in enumerate(texts, 1)]
+        self.watcher.check_group(StubScraper(posts), GROUP)
+
+    def test_nothing_recorded_says_so_plainly(self):
+        self.assertIn("Nothing has", self.run_command("misses", author_id="42"))
+
+    def test_a_one_term_miss_is_recorded_and_shown(self):
+        self.feed("Oddam sobo, Bezigrad")
+        reply = self.run_command("misses", author_id="42")
+        self.assertIn("oddam + soba + ljubljana", reply)
+        self.assertIn("ljubljana", reply)
+
+    def test_a_post_that_matches_is_not_a_miss(self):
+        self.feed("Oddam sobo v Ljubljani")
+        self.assertIn("Nothing has", self.run_command("misses", author_id="42"))
+
+    def test_an_unrelated_post_is_not_a_miss(self):
+        self.feed("Prodam rabljeno kolo")
+        self.assertIn("Nothing has", self.run_command("misses", author_id="42"))
+
+    def test_the_summary_counts_the_costly_term(self):
+        self.feed("Oddam sobo, Bezigrad", "Oddam sobo na Vicu", "Oddam sobo v Siski")
+        reply = self.run_command("misses rules", author_id="42")
+        self.assertIn("missing `ljubljana`", reply)
+        self.assertIn("**3** post(s)", reply)
+
+    def test_the_buffer_is_bounded(self):
+        self.assertEqual(self.watcher.near_misses.maxlen, 300)
+
+    def test_it_is_not_admin_only(self):
+        self.assertNotIn("admin-only", self.run_command("misses", author_id="42"))
+
+
 class TestSafeName(unittest.TestCase):
     def test_usernames_become_usable_names(self):
         self.assertEqual(_safe_name("Domin"), "domin")

@@ -50,6 +50,7 @@ HELP_EVERYONE = """**fbwatch — your trigger words**  (prefix `{p}`)
 `{p} exclude <term>` — never notify me on posts containing it
 `{p} mine` — show my rules and where my notifications go
 `{p} test <text>` — would this post notify me?
+`{p} misses` — posts that missed one of my rules by one term
 `{p} channel <channel id>` — send my listings elsewhere (`{p} channel here` to undo)
 `{p} mention off` — receive listings without being pinged
 `{p} status` — what the watcher is doing
@@ -310,6 +311,7 @@ class DiscordControl:
             "delete": self._cmd_remove,
             "exclude": self._cmd_exclude,
             "test": self._cmd_test,
+            "misses": self._cmd_misses,
             "channel": self._cmd_channel,
             "mention": self._cmd_mention,
             "join": lambda r, t: (self._mine_text(t), {}),
@@ -332,7 +334,7 @@ class DiscordControl:
         # Everything below this point acts on somebody's own subscription.
         personal = (
             "add", "remove", "rm", "delete", "exclude", "mine", "me", "whoami",
-            "test", "channel", "mention", "join",
+            "test", "channel", "mention", "join", "misses",
         )
         if verb in personal and target is None:
             target, problem = self._sign_up(author_id, author_name)
@@ -507,6 +509,54 @@ class DiscordControl:
         )
         reason = result.reason if matcher.includes else "no trigger words set"
         return f"{verdict}\nReason: `{reason}`", {}
+
+    def _cmd_misses(self, rest: str, sub: Subscriber) -> tuple[str, dict]:
+        """Posts that failed one of my rules by a single term.
+
+        An over-tight rule fails silently, so the only way to find one is to
+        see what it nearly caught.  `misses rules` is the useful view: it says
+        which single term is costing the most listings.
+        """
+        mine = [m for m in self.watcher.near_misses if m["subscriber"] == sub.name]
+        if not mine:
+            return (
+                f":ok_hand: Nothing has *nearly* matched **{sub.name}**'s rules yet. "
+                "Posts that miss by a single term show up here, which is how you "
+                "spot a rule that is too tight.",
+                {},
+            )
+
+        if rest.strip().lower() in ("rules", "rule", "summary"):
+            counts: dict[tuple, int] = {}
+            for m in mine:
+                counts[(m["rule"], m["missing"])] = counts.get((m["rule"], m["missing"]), 0) + 1
+            ranked = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:10]
+            lines = [
+                f"· `{rule}` — missing `{missing}` — **{count}** post(s)"
+                for (rule, missing), count in ranked
+            ]
+            return (
+                f"**Rules that nearly matched** ({len(mine)} post(s) recently)\n"
+                + "\n".join(lines)
+                + f"\n\nDrop or widen the missing term to catch these — an alias "
+                f"often does it: `{self.prefix} add <rule with @lj>`.",
+                {},
+            )
+
+        recent = list(reversed(mine))[:5]
+        lines = []
+        for m in recent:
+            lines.append(
+                f"· **{m['group']}** — missed `{m['rule']}` by `{m['missing']}`\n"
+                f"  {m['text'][:110]}"
+            )
+        return (
+            f"**Nearly matched** (last {len(recent)} of {len(mine)})\n"
+            + "\n".join(lines)
+            + f"\n\n`{self.prefix} misses rules` groups these by which term is "
+            "costing you the most.",
+            {},
+        )
 
     def _cmd_channel(self, rest: str, sub: Subscriber) -> tuple[str, dict]:
         """Redirect my own listings to another channel."""
