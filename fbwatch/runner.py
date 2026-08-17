@@ -23,6 +23,9 @@ log = logging.getLogger(__name__)
 
 # After this many consecutive failed cycles, tell the admin on Discord.
 ERROR_ALERT_THRESHOLD = 3
+# And after this many for a single group, so one dead group is noticed
+# even while the others keep working.
+GROUP_ALERT_THRESHOLD = 4
 
 
 class Watcher:
@@ -51,6 +54,8 @@ class Watcher:
         self._alerted = False
         self._adopted_legacy = False
         self._config_broken = False
+        self._group_health: dict[str, int] = {}
+        self._group_alerted: set[str] = set()
         # Commands run on their own thread so they are answered while a scrape
         # is in progress.  This guards the state both threads touch; the store
         # guards itself.  Never held across a browser call or an HTTP send.
@@ -240,10 +245,15 @@ class Watcher:
             log.warning("subscriber '%s' is receiving nothing: %s", sub.name, sub.why_idle())
 
         for index, group in enumerate(self.groups):
+            outcome = "error"
             try:
                 stats = self.check_group(scraper, group, notify=notify)
                 for key, value in stats.items():
                     totals[key] += value
+                # "empty" is not the same as "ok": a group that renders posts
+                # we cannot read looks identical to a quiet group unless it is
+                # counted separately.
+                outcome = "ok" if stats["seen"] else "empty"
                 log.info(
                     "%s: %d post(s) on page, %d new, %d matched, %d sent",
                     group.name, stats["seen"], stats["new"], stats["matched"], stats["sent"],
@@ -256,6 +266,7 @@ class Watcher:
             except Exception as exc:  # noqa: BLE001 - one bad group must not stop the rest
                 totals["errors"] += 1
                 log.exception("%s: unexpected error: %s", group.name, exc)
+            self._record_group_outcome(group, outcome)
 
             if index < len(self.groups) - 1:
                 pause = random.uniform(
@@ -263,6 +274,17 @@ class Watcher:
                 )
                 log.debug("waiting %.1fs before the next group", pause)
                 time.sleep(pause)
+
+        # Healthy means "read every group, and actually got posts".  The old
+        # test only considered failure when `errors` was set, so a markup change
+        # - which returns zero posts and raises nothing - was recorded as a
+        # success, cycle after cycle.  Decided here rather than in run_forever
+        # so that `check` reaches the same verdict.
+        if totals["errors"] == 0 and totals["seen"] > 0:
+            self._note_success()
+        else:
+            self._note_failure(totals)
+        self._alert_on_dead_groups()
 
         return totals
 
@@ -340,10 +362,7 @@ class Watcher:
                     self._alert(f"Facebook session expired ({exc}). Run `python main.py login`.")
                     return 2
 
-                if totals["errors"] and not (totals["seen"] or totals["new"]):
-                    self._note_failure(totals["errors"])
-                else:
-                    self._note_success()
+                # Health is decided inside run_cycle, so `check` gets it too.
 
                 self.cycles = cycle
                 self.total_sent += totals["sent"]
@@ -437,18 +456,61 @@ class Watcher:
             self._wake.clear()
 
     # -- error reporting -------------------------------------------------
-    def _note_failure(self, count: int) -> None:
+    def _record_group_outcome(self, group: Group, outcome: str) -> None:
+        """Count consecutive bad cycles per group.
+
+        Without this, one working group hides all the others: the cycle totals
+        show `seen > 0` and everything reads as healthy while five of seven
+        groups have been dead for a week.
+        """
+        if outcome == "ok":
+            if self._group_health.pop(group.slug, 0):
+                log.info("%s is returning posts again", group.name)
+            self._group_alerted.discard(group.slug)
+        else:
+            self._group_health[group.slug] = self._group_health.get(group.slug, 0) + 1
+
+    def _alert_on_dead_groups(self) -> None:
+        bad = {
+            slug: count
+            for slug, count in self._group_health.items()
+            if count >= GROUP_ALERT_THRESHOLD and slug not in self._group_alerted
+        }
+        if not bad:
+            return
+        names = [g.name for g in self.groups if g.slug in bad] or list(bad)
+        if self._alert(
+            f"{len(bad)} of {len(self.groups)} group(s) have returned nothing for "
+            f"{max(bad.values())} cycles: {', '.join(names[:5])}. "
+            "Check you are still a member, and that the group still exists."
+        ):
+            self._group_alerted.update(bad)
+
+    def _note_failure(self, totals: dict) -> None:
         self._consecutive_failures += 1
-        if self._consecutive_failures >= ERROR_ALERT_THRESHOLD and not self._alerted:
-            # Latch only on a *successful* send.  A network outage is exactly
-            # when this alert matters and exactly when the send fails, so
-            # latching regardless meant the one message you needed was dropped
-            # and never retried.
-            self._alerted = self._alert(
+        if self._consecutive_failures < ERROR_ALERT_THRESHOLD or self._alerted:
+            return
+
+        if totals.get("errors"):
+            message = (
                 f"fbwatch has failed to read any group for "
-                f"{self._consecutive_failures} cycles in a row ({count} error(s) last cycle). "
-                f"Check {self.cfg.log_path.name}."
+                f"{self._consecutive_failures} cycles in a row "
+                f"({totals['errors']} error(s) last cycle). Check {self.cfg.log_path.name}."
             )
+        else:
+            # The dangerous one: every group loaded fine and yielded nothing.
+            # That is what a Facebook markup change looks like from in here.
+            message = (
+                f"fbwatch read every group without error but found no posts at all, "
+                f"for {self._consecutive_failures} cycles. Facebook has probably "
+                f"changed its markup. Run `python main.py dump` and check "
+                f"whether any posts are parsed."
+            )
+        # Latch only on a *successful* send.  A network outage is exactly when
+        # this alert matters and exactly when the send fails, so latching
+        # regardless meant the one message you needed was dropped and never
+        # retried.
+        self._alerted = self._alert(message)
 
     def _note_success(self) -> None:
         if self._alerted:

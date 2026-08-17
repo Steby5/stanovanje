@@ -130,24 +130,24 @@ class TestAlertsSurviveAnOutage(LoopTestCase):
         self.notifier.working = False
         w = self.watcher()
         for _ in range(4):
-            w._note_failure(1)
+            w._note_failure({"errors": 1, "seen": 0})
         self.assertFalse(w._alerted)  # not latched, so it will try again
 
         self.notifier.working = True
-        w._note_failure(1)
+        w._note_failure({"errors": 1, "seen": 0})
         self.assertTrue(w._alerted)
         self.assertEqual(len(self.notifier.sent), 1)
 
     def test_a_successful_alert_is_sent_once(self):
         w = self.watcher()
         for _ in range(5):
-            w._note_failure(1)
+            w._note_failure({"errors": 1, "seen": 0})
         self.assertEqual(len(self.notifier.sent), 1)
 
     def test_recovery_is_announced(self):
         w = self.watcher()
         for _ in range(3):
-            w._note_failure(1)
+            w._note_failure({"errors": 1, "seen": 0})
         w._note_success()
         self.assertTrue(any("reading groups again" in m for m in self.notifier.sent))
 
@@ -179,6 +179,109 @@ class TestAlertsSurviveAnOutage(LoopTestCase):
         w = self.watcher()
         self.assertFalse(w._alert("quiet please"))
         self.assertEqual(self.notifier.sent, [])
+
+
+class TestZeroPostsIsNotSuccess(LoopTestCase):
+    """The failure that actually happened, and went unnoticed.
+
+    Facebook changed its markup, extraction returned [] with no exception, and
+    every cycle was recorded as healthy - so nothing ever complained.
+    """
+
+    def setUp(self):
+        super().setUp()
+        (self.base / "groups.txt").write_text(
+            "https://www.facebook.com/groups/555000 | One\n"
+            "https://www.facebook.com/groups/777000 | Two\n"
+            "https://www.facebook.com/groups/888000 | Three\n",
+            encoding="utf-8",
+        )
+
+    def test_reading_nothing_anywhere_is_a_failure(self):
+        w = self.watcher()
+        for _ in range(4):
+            w.run_cycle(StubScraper([]))
+            if w._consecutive_failures == 0:
+                self.fail("a cycle that read no posts was recorded as a success")
+        self.assertTrue(any("no posts at all" in m for m in self.notifier.sent))
+
+    def test_the_message_names_the_likely_cause(self):
+        w = self.watcher()
+        for _ in range(3):
+            w.run_cycle(StubScraper([]))
+        alert = next(m for m in self.notifier.sent if "no posts at all" in m)
+        self.assertIn("markup", alert)
+        self.assertIn("dump", alert)  # the command that diagnoses it
+
+    def test_an_errors_cycle_still_says_errors(self):
+        w = self.watcher()
+        broken = {s: ScrapeError("nope") for s in ("555000", "777000", "888000")}
+        for _ in range(3):
+            w.run_cycle(StubScraper(per_group=broken))
+        self.assertTrue(any("error(s) last cycle" in m for m in self.notifier.sent))
+
+    def test_a_healthy_cycle_resets_the_count(self):
+        w = self.watcher()
+        w.run_cycle(StubScraper([]))
+        self.assertEqual(w._consecutive_failures, 1)
+        w.run_cycle(StubScraper([make_post("1", "Oddam sobo", GROUP)]))
+        self.assertEqual(w._consecutive_failures, 0)
+
+
+class TestOneDeadGroupIsNoticed(LoopTestCase):
+    """One working group used to hide every other group being dead."""
+
+    def setUp(self):
+        super().setUp()
+        (self.base / "groups.txt").write_text(
+            "https://www.facebook.com/groups/555000 | Working\n"
+            "https://www.facebook.com/groups/777000 | Dead\n",
+            encoding="utf-8",
+        )
+
+    def scraper(self):
+        # One group returns posts, the other silently returns nothing.
+        return StubScraper(per_group={
+            "555000": [make_post("1", "Oddam sobo v Ljubljani", GROUP)],
+            "777000": [],
+        })
+
+    def test_the_cycle_looks_healthy_but_the_group_is_flagged(self):
+        w = self.watcher()
+        for _ in range(5):
+            w.run_cycle(self.scraper())
+
+        # The cycle totals are fine - that is exactly why this was invisible.
+        self.assertEqual(w._consecutive_failures, 0)
+        self.assertTrue(any("returned nothing" in m for m in self.notifier.sent))
+
+    def test_it_names_the_group(self):
+        w = self.watcher()
+        for _ in range(5):
+            w.run_cycle(self.scraper())
+        alert = next(m for m in self.notifier.sent if "returned nothing" in m)
+        self.assertIn("Dead", alert)
+        self.assertNotIn("Working", alert)
+
+    def test_it_alerts_once_not_every_cycle(self):
+        w = self.watcher()
+        for _ in range(10):
+            w.run_cycle(self.scraper())
+        self.assertEqual(len([m for m in self.notifier.sent if "returned nothing" in m]), 1)
+
+    def test_a_group_coming_back_clears_it(self):
+        w = self.watcher()
+        for _ in range(5):
+            w.run_cycle(self.scraper())
+        both_working = StubScraper([make_post("2", "Oddam sobo v Ljubljani", GROUP)])
+        w.run_cycle(both_working)
+        self.assertEqual(w._group_health.get("777000", 0), 0)
+
+    def test_a_healthy_group_is_never_flagged(self):
+        w = self.watcher()
+        for _ in range(6):
+            w.run_cycle(self.scraper())
+        self.assertNotIn("555000", w._group_health)
 
 
 class TestStopping(LoopTestCase):

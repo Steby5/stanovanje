@@ -629,7 +629,9 @@ membership.
 arrives, run `python main.py check -v` and look for `skip` lines in the output.
 
 **0 posts read, no errors** — Facebook changed its markup and the extractor no
-longer recognises a post. Run `python main.py dump`: if it reports feed items but
+longer recognises a post. The watcher now says so on Discord after three such
+cycles, and `python main.py check` exits **4** for this case (1 means the scrape
+errored), so a cron wrapper can tell the two apart. Run `python main.py dump`: if it reports feed items but
 `posts parsed: 0`, that's the case. `debug/dump_<group>.html` is the page as the
 scraper saw it, and `dump_<group>.json` is what it managed to pull out.
 

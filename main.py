@@ -204,7 +204,21 @@ def cmd_check(cfg: Config, args) -> int:
         "Done: %d post(s) read, %d new, %d matched, %d notification(s), %d error(s)",
         totals["seen"], totals["new"], totals["matched"], totals["sent"], totals["errors"],
     )
-    return 1 if totals["errors"] and not totals["seen"] else 0
+
+    # Distinct codes so a wrapper can tell the two failures apart: 1 is "the
+    # scrape errored", 4 is "every group loaded fine and yielded nothing",
+    # which is what a Facebook markup change looks like from out here.  This
+    # used to return 0 for the second case, so nothing external could see it.
+    if totals["errors"]:
+        return 1
+    if not totals["seen"]:
+        log.error(
+            "Read every group without error but found no posts at all - Facebook "
+            "has probably changed its markup. Run `python main.py dump` and check "
+            "whether any posts are parsed."
+        )
+        return 4
+    return 0
 
 
 def cmd_run(cfg: Config, args) -> int:
