@@ -150,7 +150,12 @@ class Watcher:
                     if notify:
                         self.store.add(sub.name, group.slug, post.post_id)
 
-                    if first_time[sub.name] and not self.cfg.notify_on_first_run:
+                    # A first poll is silent so nobody is buried under the
+                    # existing backlog - but only when actually notifying. A
+                    # dry run records nothing, so there is no flood to prevent,
+                    # and suppressing here would make it impossible to answer
+                    # "would my new rules catch anything?".
+                    if notify and first_time[sub.name] and not self.cfg.notify_on_first_run:
                         seeded[sub.name] += 1
                         continue
 
